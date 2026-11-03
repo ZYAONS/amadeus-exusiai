@@ -27,6 +27,15 @@ export const LINES = VOICE.lines
 
 export const lineByNo = (no: number): VoiceLine | undefined => LINES.find((l) => l.no === no)
 
+export type VoiceLang = 'zh' | 'jp'
+
+export const VOICE_LANG_LABEL: Record<VoiceLang, string> = { zh: '中文配音', jp: '日语配音' }
+
+/** 同一句台词的两种文本；日配取 `jp`，缺了就退回中文原文 */
+export function lineText(line: VoiceLine, lang: VoiceLang): string {
+  return (lang === 'jp' ? line.jp : line.zh) || line.zh
+}
+
 /** 官方档案（PRTS 干员页原字段，未改写） */
 export const OPERATOR = {
   id: VOICE.operatorId,
@@ -41,6 +50,7 @@ export const OPERATOR = {
   faction: '炎-龙门 · 企鹅物流',
   artist: '幻象黑兔',
   cv: '蔡书瑾',
+  cvJp: '石见舞菜香',
   trait: '自身生命会不断流失',
   talent: '火力电台：在场时，每当有友方干员的弹药被消耗就会回复自身生命值，并有概率立即对该干员攻击范围的敌人召唤一次轰炸。',
   skills: ['使命必达！', '天空大扫除', '开火成瘾症'],
@@ -63,8 +73,10 @@ export const PORTRAIT_E2 = [
   ...PORTRAIT_E1,
 ]
 
-export function voiceCandidates(file: string): string[] {
-  return [`/assets/voice/${file}`, `${VOICE.voiceBase.cn}${file}`, `${VOICE.voiceBase.jp}${file}`]
+export function voiceCandidates(file: string, lang: VoiceLang): string[] {
+  // voice_cn/ 是中文配音，voice/ 才是日配；文件名两边一样，只有目录不同
+  const remote = lang === 'jp' ? VOICE.voiceBase.jp : VOICE.voiceBase.cn
+  return [`/assets/voice/${lang}/${file}`, `${remote}${file}`]
 }
 
 /** 台词分组：给「台词库」面板与闲置主动说话用 */

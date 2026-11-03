@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Mic, Send, Square, Volume2 } from 'lucide-react'
+import type { VoiceLang } from '../lib/operator'
 
 type Props = {
   text: string
@@ -13,6 +14,8 @@ type Props = {
   onToggleMic: () => void
   onReplay: () => void
   hint: string
+  lang: VoiceLang
+  onToggleLang: () => void
 }
 
 /** 打字机：data-typing 是给自检用的——动画没走完就断言文本，会得到一屏假失败 */
@@ -50,6 +53,8 @@ export default function DialogBox({
   onToggleMic,
   onReplay,
   hint,
+  lang,
+  onToggleLang,
 }: Props) {
   const [draft, setDraft] = useState('')
   const { shown, typing } = useTypewriter(text, streaming)
@@ -83,8 +88,17 @@ export default function DialogBox({
           )}
           <button
             type="button"
+            onClick={onToggleLang}
+            aria-label="切换配音语言"
+            title="切换中配 / 日配"
+            className="ml-auto border border-[var(--po-line)] px-1.5 py-[1px] text-[10px] text-[var(--po-halo)] transition hover:border-[var(--po-amber)]"
+          >
+            {lang === 'jp' ? '日本語' : '中文'}
+          </button>
+          <button
+            type="button"
             onClick={onReplay}
-            className="ml-auto flex items-center gap-1 text-[var(--po-muted)] transition hover:text-[var(--po-bone)]"
+            className="flex items-center gap-1 text-[var(--po-muted)] transition hover:text-[var(--po-bone)]"
             aria-label="重播上一句"
           >
             <Volume2 size={13} /> 重播

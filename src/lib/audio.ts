@@ -1,10 +1,10 @@
-import { voiceCandidates } from './operator'
+import { voiceCandidates, type VoiceLang } from './operator'
 
 // 播放器必须挂在 DOM 上（<audio id="official-voice">）：游离的 new Audio() 外面 querySelector
 // 找不到，自检也没法验证「真的在响」。
 const el = () => document.getElementById('official-voice') as HTMLAudioElement | null
 
-// 「先试完所有地址，再判缺席」：本地 → 中文配音 → 日配，全部试过才认命
+// 「先试完所有地址，再判缺席」：本地 → 官方目录，按语种各算各的
 const absent = new Set<string>()
 
 export function resetVoiceCache() {
@@ -13,10 +13,11 @@ export function resetVoiceCache() {
 
 export type PlayResult = 'playing' | 'blocked' | 'absent'
 
-export async function playOfficial(file: string): Promise<PlayResult> {
+export async function playOfficial(file: string, lang: VoiceLang): Promise<PlayResult> {
   const audio = el()
-  if (!audio || absent.has(file)) return 'absent'
-  for (const src of voiceCandidates(file)) {
+  const key = `${lang}/${file}`
+  if (!audio || absent.has(key)) return 'absent'
+  for (const src of voiceCandidates(file, lang)) {
     audio.src = src
     try {
       await audio.play()
@@ -28,7 +29,7 @@ export async function playOfficial(file: string): Promise<PlayResult> {
       // 其余（NotSupportedError / 解码失败）换下一个镜像
     }
   }
-  absent.add(file)
+  absent.add(key)
   return 'absent'
 }
 
@@ -43,15 +44,16 @@ export function stopOfficial() {
 /** 浏览器 TTS：没有官方语音可用时读回复正文 */
 export function speak(
   text: string,
-  hooks: { onStart?: () => void; onEnd?: () => void } = {},
+  hooks: { onStart?: () => void; onEnd?: () => void; lang?: VoiceLang } = {},
 ): boolean {
   const synth = window.speechSynthesis
   if (!synth || !text.trim()) return false
   synth.cancel()
   const u = new SpeechSynthesisUtterance(text.replace(/[（(][^）)]*[）)]/g, ''))
-  const zh = synth.getVoices().find((v) => /^zh/i.test(v.lang))
-  if (zh) u.voice = zh
-  u.lang = zh?.lang ?? 'zh-CN'
+  const want = hooks.lang === 'jp' ? /^ja/i : /^zh/i
+  const voice = synth.getVoices().find((v) => want.test(v.lang))
+  if (voice) u.voice = voice
+  u.lang = voice?.lang ?? (hooks.lang === 'jp' ? 'ja-JP' : 'zh-CN')
   u.rate = 1.05
   u.pitch = 1.15
   u.onstart = () => hooks.onStart?.()

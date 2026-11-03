@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { TRUST_MAX, TRUST_PER_TURN } from './trust'
 import { fetchHealth, type Health } from './api'
 import type { Emotion } from './emotion'
+import type { VoiceLang } from './operator'
 
 export type Msg = {
   id: string
@@ -18,10 +19,11 @@ export type Config = {
   voice: boolean
   tts: boolean
   autoIdle: boolean
-  textLang: 'zh' | 'ja' | 'en'
+  /** 配音与台词用哪种语言：中文（voice_cn）还是日配（voice） */
+  lang: VoiceLang
 }
 
-const DEFAULT_CONFIG: Config = { voice: true, tts: true, autoIdle: true, textLang: 'zh' }
+const DEFAULT_CONFIG: Config = { voice: true, tts: true, autoIdle: true, lang: 'zh' }
 const KEY = 'amadeus.exusiai.v1'
 
 type Save = { name: string; trust: number; messages: Msg[]; config: Config }

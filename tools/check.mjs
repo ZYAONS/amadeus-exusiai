@@ -189,6 +189,7 @@ for (const vp of VIEWPORTS) {
   }
   const L = window.__CHECK_LINES
   const zhSet = new Set(L.map((l) => l.zh))
+  const jpSet = new Set(L.map((l) => l.jp))
   const dlg = () => document.querySelector('[role="log"]')
   const dlgText = () => (dlg() ? dlg().innerText : '').trim()
   const setVal = (el, v) => {
@@ -333,6 +334,54 @@ for (const vp of VIEWPORTS) {
   ok('本地模式回复只引用官方台词（不编造）', zhSet.has(replied) || replied.indexOf('本地人格模式') >= 0,
     zhSet.has(replied) ? '命中台词库' : '模板回复：' + replied.slice(0, 26))
   ok('界面明说当前是本地人格模式', document.body.innerText.indexOf('本地人格模式') >= 0, '看不出模式会让人误以为是真模型')
+
+  // ── 日语配音：切到日配后，台词文本和音频文件都必须换成日文那一份
+  byLabel('设置与档案').click()
+  const cfgOk = await until(() => document.querySelector('[role="dialog"][aria-label="终端设置"]'))
+  ok('设置面板打开', cfgOk)
+  if (cfgOk) {
+    const sel = byLabel('配音与台词语言')
+    ok('语言选择器存在', !!sel, sel ? 'aria-label 命中' : '没找到')
+    if (sel) {
+      const setSelect = (el, v) => {
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set
+        setter.call(el, v)
+        el.dispatchEvent(new Event('change', { bubbles: true }))
+      }
+      setSelect(sel, 'jp')
+      await wait(150)
+      let saved = null
+      try { saved = JSON.parse(localStorage.getItem('amadeus.exusiai.v1')) } catch (e) {}
+      ok('日配设置已持久化', saved && saved.config && saved.config.lang === 'jp',
+        saved ? 'lang=' + saved.config.lang : '读不到存档')
+    }
+  }
+  byLabel('关闭').click()
+  await until(() => !document.querySelector('[role="dialog"][aria-label="终端设置"]'))
+
+  const beforeJp = dlgText()
+  const stageBtnJp = document.querySelector('button[title="戳一下"]')
+  if (stageBtnJp) stageBtnJp.click()
+  await until(() => dlg() && dlg().dataset.typing === 'false' && dlgText() !== beforeJp, 12000)
+  const jpShown = dlgText()
+  ok('日配模式下台词是日文原文', jpSet.has(jpShown),
+    jpSet.has(jpShown) ? '命中日文台词库' : '实际=' + jpShown.slice(0, 26))
+  ok('日文台词与中文确实不是同一份', jpShown !== beforeJp, '中文=' + beforeJp.slice(0, 12) + ' 日文=' + jpShown.slice(0, 12))
+  const jpAudio = await until(() => (audio.currentSrc || '').indexOf('/voice/jp/') > 0, 8000)
+  ok('播放的是日配音频文件', jpAudio, 'src=' + (audio.currentSrc || '').split('/').slice(-3).join('/'))
+
+  // ── 对话框里的一键切语种（新按钮最容易写了但没接上）
+  const toggle = byLabel('切换配音语言')
+  ok('对话框里有中/日一键切换', !!toggle, toggle ? '按钮文字=' + toggle.textContent : '没找到')
+  if (toggle) {
+    const beforeToggle = dlgText()
+    toggle.click()
+    await until(() => dlg() && dlg().dataset.typing === 'false' && dlgText() !== beforeToggle, 12000)
+    const backZh = dlgText()
+    ok('一键切回中文后台词变回中文', zhSet.has(backZh), '实际=' + backZh.slice(0, 22))
+    const zhAudio = await until(() => (audio.currentSrc || '').indexOf('/voice/zh/') > 0, 8000)
+    ok('一键切回中文后播的是中配', zhAudio, 'src=' + (audio.currentSrc || '').split('/').slice(-3).join('/'))
+  }
 
   // ── 开关类：语音静音要真的落盘
   const muteBtn = byLabel('关闭语音')

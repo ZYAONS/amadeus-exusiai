@@ -53,7 +53,7 @@ const FACT: [string, string][] = [
   ['种族 / 出身', `${OPERATOR.race} / ${OPERATOR.origin}`],
   ['所属势力', OPERATOR.faction],
   ['画师', OPERATOR.artist],
-  ['CV（中配）', OPERATOR.cv],
+  ['CV', `中配 ${OPERATOR.cv} / 日配 ${OPERATOR.cvJp}`],
   ['特性', OPERATOR.trait],
   ['技能', OPERATOR.skills.join(' / ')],
   ['天赋', OPERATOR.talent],
@@ -90,16 +90,15 @@ export default function ConfigPanel({
           <Row label="闲置时主动说话">
             <Switch on={config.autoIdle} onClick={() => onConfig({ autoIdle: !config.autoIdle })} label="闲置时主动说话" />
           </Row>
-          <Row label="台词显示语言">
+          <Row label="配音与台词语言">
             <select
-              value={config.textLang}
-              onChange={(e) => onConfig({ textLang: e.target.value as Config['textLang'] })}
-              aria-label="台词显示语言"
+              value={config.lang}
+              onChange={(e) => onConfig({ lang: e.target.value as Config['lang'] })}
+              aria-label="配音与台词语言"
               className="border border-[var(--po-line)] bg-[rgba(16,16,24,0.9)] px-2 py-1 font-hud text-[11px]"
             >
-              <option value="zh">中文</option>
-              <option value="ja">日本語</option>
-              <option value="en">English</option>
+              <option value="zh">中文（蔡书瑾）</option>
+              <option value="jp">日本語（石見舞菜香）</option>
             </select>
           </Row>
         </div>

@@ -11,7 +11,7 @@ import { useStore } from './lib/store'
 import { chatStream, OfflineError, type ChatMessage } from './lib/api'
 import { classifyEmotion, type Emotion } from './lib/emotion'
 import { offlineReply } from './lib/offlinePersona'
-import { IDLE_POOL, LINES, TOUCH_POOL, type VoiceLine } from './lib/operator'
+import { IDLE_POOL, LINES, TOUCH_POOL, lineText, type VoiceLang, type VoiceLine } from './lib/operator'
 import { unlockedLines } from './lib/trust'
 import { playOfficial, resetVoiceCache, speak, stopOfficial, stopSpeaking } from './lib/audio'
 
@@ -72,25 +72,27 @@ export default function App() {
     if (m.lineNo) spokenNos.current = [...spokenNos.current.slice(-8), m.lineNo]
   }
 
-  async function playLineAudio(line: VoiceLine) {
+  async function playLineAudio(line: VoiceLine, langOverride?: VoiceLang) {
     if (!s.config.voice) return
     stopSpeaking()
     setPlayingNo(line.no)
-    const res = await playOfficial(line.file)
+    const lang = langOverride ?? s.config.lang
+    const res = await playOfficial(line.file, lang)
     if (res === 'blocked') {
       // 移动端/无手势时浏览器会拒掉 play()：留个待播，等第一次点击再补
       pendingLine.current = line
       setNeedGesture(true)
     } else if (res === 'absent' && s.config.tts) {
-      speak(line.zh, { onStart: () => setSpeaking(true), onEnd: () => setSpeaking(false) })
+      speak(lineText(line, lang), { onStart: () => setSpeaking(true), onEnd: () => setSpeaking(false), lang })
     }
     window.setTimeout(() => setPlayingNo((n) => (n === line.no ? undefined : n)), 1200)
   }
   playLineRef.current = playLineAudio
 
-  async function runLine(line: VoiceLine) {
-    emit({ text: line.zh, lineNo: line.no, lineTitle: line.title, emotion: classifyEmotion(line.zh) })
-    await playLineAudio(line)
+  async function runLine(line: VoiceLine, langOverride?: VoiceLang) {
+    const text = lineText(line, langOverride ?? s.config.lang)
+    emit({ text, lineNo: line.no, lineTitle: line.title, emotion: classifyEmotion(text) })
+    await playLineAudio(line, langOverride)
   }
 
   /** 补播被浏览器拦下的那句（第一次点击时触发） */
@@ -132,7 +134,7 @@ export default function App() {
         if (!acc.trim()) throw new OfflineError('模型返回为空')
         emit({ text: acc, emotion: classifyEmotion(acc) })
         if (s.config.voice && s.config.tts) {
-          speak(acc, { onStart: () => setSpeaking(true), onEnd: () => setSpeaking(false) })
+          speak(acc, { onStart: () => setSpeaking(true), onEnd: () => setSpeaking(false), lang: s.config.lang })
         }
       } else {
         throw new OfflineError('offline')
@@ -145,7 +147,7 @@ export default function App() {
       else {
         emit({ text: reply.text, emotion: 'neutral' })
         if (s.config.voice && s.config.tts) {
-          speak(reply.text, { onStart: () => setSpeaking(true), onEnd: () => setSpeaking(false) })
+          speak(reply.text, { onStart: () => setSpeaking(true), onEnd: () => setSpeaking(false), lang: s.config.lang })
         }
       }
     } finally {
@@ -167,7 +169,9 @@ export default function App() {
     if (!last) return
     const line = last.lineNo ? LINES.find((l) => l.no === last.lineNo) : undefined
     if (line) void playLineAudio(line)
-    else if (s.config.tts) speak(last.text, { onStart: () => setSpeaking(true), onEnd: () => setSpeaking(false) })
+    else if (s.config.tts) {
+      speak(last.text, { onStart: () => setSpeaking(true), onEnd: () => setSpeaking(false), lang: s.config.lang })
+    }
   }
 
   function toggleMic() {
@@ -318,6 +322,15 @@ export default function App() {
         onSend={(t) => void send(t)}
         onToggleMic={toggleMic}
         onReplay={replayLast}
+        lang={s.config.lang}
+        onToggleLang={() => {
+          const next = s.config.lang === 'jp' ? 'zh' : 'jp'
+          s.setConfig({ lang: next })
+          // 换语种后把当前这句用新语种再说一遍，别让文字和声音对不上
+          const last = [...s.messages].reverse().find((m) => m.role === 'operator' && m.lineNo)
+          const line = last?.lineNo ? LINES.find((l) => l.no === last.lineNo) : undefined
+          if (line) void runLine(line, next)
+        }}
       />
 
       <ChatHistory
@@ -335,12 +348,14 @@ export default function App() {
       <VoiceLibrary
         open={sheet === 'voices'}
         trust={s.trust}
+        lang={s.config.lang}
         playingNo={playingNo}
         onClose={() => setSheet(null)}
         onPlay={(line) => {
-          setDialog({ text: line.zh, lineTitle: line.title, official: true })
-          setEmotion(classifyEmotion(line.zh))
-          s.push({ role: 'operator', text: line.zh, lineNo: line.no, lineTitle: line.title })
+          const text = lineText(line, s.config.lang)
+          setDialog({ text, lineTitle: line.title, official: true })
+          setEmotion(classifyEmotion(text))
+          s.push({ role: 'operator', text, lineNo: line.no, lineTitle: line.title })
           void playLineAudio(line)
         }}
       />

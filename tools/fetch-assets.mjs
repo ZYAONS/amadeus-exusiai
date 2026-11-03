@@ -4,9 +4,9 @@
 //   node tools/fetch-assets.mjs --force   全部重取
 //   node tools/fetch-assets.mjs --check   只核对
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -23,10 +23,10 @@ const PORTRAITS = [
 ]
 
 const voiceData = JSON.parse(await readFile(join(root, 'src/data/voice-lines.json'), 'utf8'))
-const VOICES = voiceData.lines.map((l) => [
-  `voice/${l.file}`,
-  `${voiceData.voiceBase.cn}${l.file}`,
-  `${voiceData.voiceBase.jp}${l.file}`,
+// 两种配音各一份：voice_cn/ 是中文，voice/ 是日配，文件名一模一样（cn_XXX 里的 cn 是编号不是语种）
+const VOICES = voiceData.lines.flatMap((l) => [
+  [`voice/zh/${l.file}`, `${voiceData.voiceBase.cn}${l.file}`],
+  [`voice/jp/${l.file}`, `${voiceData.voiceBase.jp}${l.file}`],
 ])
 
 const TARGETS = [...PORTRAITS.map(([name, url]) => [name, url, url]), ...VOICES]
@@ -103,7 +103,23 @@ for (const [rel, ...urls] of TARGETS) {
 
 manifest.note = '素材著作权归上海鹰角网络科技有限公司所有；本清单只记录来源地址与校验值，文件本身不入库。'
 manifest.fetchedAt = new Date().toISOString()
+// 清单只留这一轮真正需要的条目，旧结构（比如只有中配的时候）不会烂在里面
+const keep = new Set(TARGETS.map(([rel]) => rel))
+for (const key of Object.keys(manifest.files)) if (!keep.has(key)) delete manifest.files[key]
 await writeFile(MANIFEST, JSON.stringify(manifest, null, 2) + '\n', 'utf8')
+
+// 顺手清掉本地已经不用的素材，别让旧目录一直占着几十 MB
+for (const dir of [join(OUT, 'voice'), join(OUT, 'voice/zh'), join(OUT, 'voice/jp')]) {
+  for (const name of await readdir(dir).catch(() => [])) {
+    const full = join(dir, name)
+    const info = await stat(full).catch(() => null)
+    if (!info || info.isDirectory()) continue
+    const rel = relative(OUT, full).split('\\').join('/')
+    if (keep.has(rel)) continue
+    await unlink(full).catch(() => {})
+    console.log(`- 清掉多余的 ${rel}`)
+  }
+}
 
 console.log(`\n新取 ${fetched} 个，已有 ${skipped} 个，失败 ${bad} 个 -> ${OUT}`)
 if (bad) process.exitCode = 1
