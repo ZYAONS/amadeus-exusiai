@@ -1,0 +1,74 @@
+import raw from '../data/voice-lines.json'
+
+export type Unlock = { kind: 'elite' | 'trust' | 'other'; value: number } | null
+
+export type VoiceLine = {
+  no: number
+  title: string
+  trigger: string
+  file: string
+  zh: string
+  jp: string
+  en: string
+  unlock: Unlock
+}
+
+export const VOICE = raw as unknown as {
+  operatorId: string
+  operator: string
+  operatorEn: string
+  voiceBase: { cn: string; jp: string }
+  source: string
+  copyright: string
+  lines: VoiceLine[]
+}
+
+export const LINES = VOICE.lines
+
+export const lineByNo = (no: number): VoiceLine | undefined => LINES.find((l) => l.no === no)
+
+/** 官方档案（PRTS 干员页原字段，未改写） */
+export const OPERATOR = {
+  id: VOICE.operatorId,
+  name: '新约能天使',
+  nameEn: 'Exusiai the New Covenant',
+  stars: 6,
+  klass: '特种',
+  branch: '怪杰',
+  tags: ['输出', '支援'],
+  race: '萨科塔',
+  origin: '拉特兰',
+  faction: '炎-龙门 · 企鹅物流',
+  artist: '幻象黑兔',
+  cv: '蔡书瑾',
+  trait: '自身生命会不断流失',
+  talent: '火力电台：在场时，每当有友方干员的弹药被消耗就会回复自身生命值，并有概率立即对该干员攻击范围的敌人召唤一次轰炸。',
+  skills: ['使命必达！', '天空大扫除', '开火成瘾症'],
+  /** 她在语音里对玩家的称呼 */
+  address: '老板',
+} as const
+
+// 立绘：先本地（tools/fetch-assets.mjs 落地），再回源 PRTS。顺序不能反——
+// 「缺席」是终态，一旦判定失败元素就隐藏，后面换地址也救不回来。
+// 两张图都是官方立绘：E0/E1 是全身站姿（默认用这张，人物大、看得清），
+// 精二那张是爆炸式插画，信赖到精英阶段 2 才换上——进度有视觉回报。
+const REMOTE = 'https://media.prts.wiki'
+export const PORTRAIT_E1 = [
+  '/assets/立绘_1.png',
+  `${REMOTE}/5/56/${encodeURIComponent('立绘_新约能天使_1.png')}`,
+]
+export const PORTRAIT_E2 = [
+  '/assets/立绘_2.png',
+  `${REMOTE}/0/07/${encodeURIComponent('立绘_新约能天使_2.png')}`,
+  ...PORTRAIT_E1,
+]
+
+export function voiceCandidates(file: string): string[] {
+  return [`/assets/voice/${file}`, `${VOICE.voiceBase.cn}${file}`, `${VOICE.voiceBase.jp}${file}`]
+}
+
+/** 台词分组：给「台词库」面板与闲置主动说话用 */
+const byTrigger = (...triggers: string[]) => LINES.filter((l) => triggers.includes(l.trigger))
+export const IDLE_POOL = byTrigger('HOME_SHOW', 'HOME_WAIT', 'HOME_PLACE')
+export const TOUCH_POOL = byTrigger('BUILDING_TOUCHING', 'BUILDING_FAVOR_BUBBLE')
+export const GREETING_POOL = byTrigger('GREETING', 'GACHA', 'HOME_PLACE')

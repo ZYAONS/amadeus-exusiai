@@ -1,0 +1,208 @@
+{
+  "operator": "新约能天使",
+  "operatorId": "char_1041_angel2",
+  "files": {
+    "立绘_1.png": {
+      "source": "https://media.prts.wiki/5/56/%E7%AB%8B%E7%BB%98_%E6%96%B0%E7%BA%A6%E8%83%BD%E5%A4%A9%E4%BD%BF_1.png",
+      "sha256": "172c0327cf616a28513e5d809ea91292927c404181e5c73642befdd8bf200205",
+      "bytes": 1404661
+    },
+    "立绘_2.png": {
+      "source": "https://media.prts.wiki/0/07/%E7%AB%8B%E7%BB%98_%E6%96%B0%E7%BA%A6%E8%83%BD%E5%A4%A9%E4%BD%BF_2.png",
+      "sha256": "bc999fd3782e82f67ac5cc2b6d00f80a595798045dde9ac2e4fe209a8e4c06c0",
+      "bytes": 4901265
+    },
+    "voice/cn_001.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_001.mp3",
+      "sha256": "16166e40a5319db218a39c615eb9f5302b7d9eb78956716f045f2cf31012175f",
+      "bytes": 107433
+    },
+    "voice/cn_002.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_002.mp3",
+      "sha256": "2ebdad569529f93a70ea4e7150c4b06daa85865c8830b1ad0dfaeecd9f60b2d5",
+      "bytes": 177650
+    },
+    "voice/cn_003.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_003.mp3",
+      "sha256": "83302e6c4e9c2591ceb2737676feac5a160bd1644885bd67cb947c9879787a8c",
+      "bytes": 131466
+    },
+    "voice/cn_004.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_004.mp3",
+      "sha256": "bd64a7dd7d1dae5c14dc660f371d0298020e782ca9cc743f2a549ef41a0b9c40",
+      "bytes": 185382
+    },
+    "voice/cn_005.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_005.mp3",
+      "sha256": "b34f65d07b46886ad4fb557e59d212a832c685afa06fbaf33cf4c360db59a6a5",
+      "bytes": 134809
+    },
+    "voice/cn_006.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_006.mp3",
+      "sha256": "58503989855b56db9db75b3ae5dd638436777a1cee01a9cc5a4a20973a004edd",
+      "bytes": 149020
+    },
+    "voice/cn_007.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_007.mp3",
+      "sha256": "f5e3e4185bab60d4b23e70fe3640c3a9adcc2840ef56e072f74d5732b7ad24e2",
+      "bytes": 172217
+    },
+    "voice/cn_008.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_008.mp3",
+      "sha256": "c93f5393b22ab9712ad7eadead864c7d6acfe5cbb7f2b5606285526ccda3e389",
+      "bytes": 142333
+    },
+    "voice/cn_009.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_009.mp3",
+      "sha256": "d9d57a19bad9e2d535df8d04ad64ec49aafb98d3f18ea21c1a040beea677bc99",
+      "bytes": 192697
+    },
+    "voice/cn_010.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_010.mp3",
+      "sha256": "1aa042df2331c1dfbf8ce3c1853e2e2f59719a78e15f8d5581ac8345d5477dab",
+      "bytes": 79430
+    },
+    "voice/cn_011.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_011.mp3",
+      "sha256": "2d65dd42da9c169e5efb9f96f7228ee1508110d66e003ddba7d11ee3c166c8b7",
+      "bytes": 62920
+    },
+    "voice/cn_012.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_012.mp3",
+      "sha256": "1844be47f5476fd9baf53e39198e15bd5df8a5fc6ce35d23c4fb28ae81c6ef55",
+      "bytes": 50800
+    },
+    "voice/cn_013.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_013.mp3",
+      "sha256": "e4cefb386b58e0db7d8d790fa7bdc07e59c8535e2e7bb0ac66ffd263de577c8e",
+      "bytes": 88207
+    },
+    "voice/cn_014.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_014.mp3",
+      "sha256": "bdcc08892393f026cc4c49b72f392e8aa421cf66d4ec5eb83c1de774e663a597",
+      "bytes": 61458
+    },
+    "voice/cn_017.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_017.mp3",
+      "sha256": "0d16a7a2b4627e5a18750d5e72f986f3abac4bbd29d812b433cc4f646ee899dd",
+      "bytes": 114538
+    },
+    "voice/cn_018.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_018.mp3",
+      "sha256": "92f7be48e40c9ac859b6561dabcd0666b563e7e30734bfa04ecca678d0cbe0a0",
+      "bytes": 90297
+    },
+    "voice/cn_019.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_019.mp3",
+      "sha256": "119e6c13a690e8769ac0a0214fad26674120048595c4a542cc687015009b397d",
+      "bytes": 96148
+    },
+    "voice/cn_020.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_020.mp3",
+      "sha256": "f7f6e4b99d034bcdcc535e2c1bfb82521aeab8d8264c53e4ea884bf3b96ea1cd",
+      "bytes": 40142
+    },
+    "voice/cn_021.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_021.mp3",
+      "sha256": "fb9c5574ad9e2179c1f1f85382643b8b1794a744962c84e86883c7d31fa5b5c7",
+      "bytes": 38052
+    },
+    "voice/cn_022.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_022.mp3",
+      "sha256": "3f5e580a4d0a6a3c3f3b1e4e4d4462c5fa620232072e95da2d42fcd3672c8fb6",
+      "bytes": 54770
+    },
+    "voice/cn_023.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_023.mp3",
+      "sha256": "b0741d7c11c0f2892e3536429d7c36a13b61406ab3c460c2b0d321e21d348184",
+      "bytes": 52471
+    },
+    "voice/cn_024.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_024.mp3",
+      "sha256": "6505aa0e8fe939c7e85cedb1ab3bd8758dd264abf09a2ec2f806c284edf01fc0",
+      "bytes": 56860
+    },
+    "voice/cn_025.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_025.mp3",
+      "sha256": "19c5a8200f42757e863e461676ecd29af32815802496e1f4f3a3dbb594ae29bd",
+      "bytes": 19035
+    },
+    "voice/cn_026.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_026.mp3",
+      "sha256": "15464b0810c9e5f00fdcc63c6846799a1a6d08e1fb56b871dff17d8181d220e0",
+      "bytes": 19035
+    },
+    "voice/cn_027.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_027.mp3",
+      "sha256": "67e8f2cf0cb42ade3cfb0c268174f4b6ab55e635d20e1e2840b46bb9ebc0d7a3",
+      "bytes": 21542
+    },
+    "voice/cn_028.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_028.mp3",
+      "sha256": "8308af58ba1a97c13d395c6fa952816340b0edf4af2b465b4cd448c3a7ca896a",
+      "bytes": 24050
+    },
+    "voice/cn_029.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_029.mp3",
+      "sha256": "33a99dda4e634c6dbc01ec8a0b754f5620f1f9a687071b857a8353b65aa69fba",
+      "bytes": 29275
+    },
+    "voice/cn_030.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_030.mp3",
+      "sha256": "9a372fcfa99decaef54637cb7931aaa909b26158fccfa99c7001a41ccd261641",
+      "bytes": 28439
+    },
+    "voice/cn_031.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_031.mp3",
+      "sha256": "b27ffbe4fc28e601798ed054762102a6309c5ba0821bd21d0bbd0b97f62fe0cf",
+      "bytes": 47665
+    },
+    "voice/cn_032.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_032.mp3",
+      "sha256": "629e75b016e8322b8bfe516e1a846d49d94f5d8380f134d4cd2ca6c5702badfe",
+      "bytes": 52053
+    },
+    "voice/cn_033.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_033.mp3",
+      "sha256": "36649b30e78a2b4667386905016ad90896e4f1e5f9bf4f41288d6c7585041a6b",
+      "bytes": 76504
+    },
+    "voice/cn_034.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_034.mp3",
+      "sha256": "db0d6340f4b5856365b6486bac391cb6e77c6d0dba1925d216d1f36c04ff55b8",
+      "bytes": 11720
+    },
+    "voice/cn_036.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_036.mp3",
+      "sha256": "611106c683c715d4cb5fc9a6374098285cb91ae902c7eed5f21920eca51a9740",
+      "bytes": 28857
+    },
+    "voice/cn_037.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_037.mp3",
+      "sha256": "0944fddb6cb600dd96da64ab0ae0181e6889562c7f179811f5a5b80932a8c17a",
+      "bytes": 16945
+    },
+    "voice/cn_038.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_038.mp3",
+      "sha256": "7bcf9c488ab1f84ece2df529a3fa4758995f95ec3fee5cbb0a3d3582c780bc82",
+      "bytes": 148393
+    },
+    "voice/cn_042.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_042.mp3",
+      "sha256": "dba1a76def81ff387764f1ced92cd0c5a8e4072f91d94e70db5a78349d7fb4b6",
+      "bytes": 19244
+    },
+    "voice/cn_043.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_043.mp3",
+      "sha256": "99121eb3a1cd58968859f276cda923969a3c2e33e42c67c501893f44d49bcd29",
+      "bytes": 146930
+    },
+    "voice/cn_044.mp3": {
+      "source": "https://torappu.prts.wiki/assets/audio/voice_cn/char_1041_angel2/cn_044.mp3",
+      "sha256": "1b82b7dbdc71f1943b9a311d83d8cf1cd82fdd2cef6b9b72fd49bc27937c6158",
+      "bytes": 184964
+    }
+  },
+  "note": "素材著作权归上海鹰角网络科技有限公司所有；本清单只记录来源地址与校验值，文件本身不入库。",
+  "fetchedAt": "2026-11-03T19:43:46.016Z"
+}

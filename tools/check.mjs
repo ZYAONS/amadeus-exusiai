@@ -1,0 +1,405 @@
+// 真跑自检：无头 Edge + CDP，不猜「元素存在」，只认真跑出来的事实。
+//   node tools/check.mjs                      测 http://127.0.0.1:1002/
+//   node tools/check.mjs http://127.0.0.1:3002/  测构建产物
+// 依赖：Node ≥ 22（内置 fetch / WebSocket）。缺东西就明说，不偷偷放宽断言。
+import { spawn } from 'node:child_process'
+import { mkdtemp, rm, readFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const URL_ARG = process.argv[2] ?? 'http://127.0.0.1:1002/'
+const PORT = 9333
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+
+const BROWSERS = [
+  'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
+  'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
+  'C:/Program Files/Google/Chrome/Application/chrome.exe',
+  'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
+]
+const browserPath = BROWSERS.find((p) => existsSync(p))
+if (!browserPath) {
+  console.error('找不到 Edge/Chrome，无法做浏览器自检')
+  process.exit(2)
+}
+
+const voiceData = JSON.parse(await readFile(join(root, 'src/data/voice-lines.json'), 'utf8'))
+
+const profile = await mkdtemp(join(tmpdir(), 'amadeus-check-'))
+
+const child = spawn(
+  browserPath,
+  [
+    '--headless=new',
+    `--remote-debugging-port=${PORT}`,
+    `--user-data-dir=${profile}`,
+    '--autoplay-policy=no-user-gesture-required',
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--disable-gpu',
+    '--window-size=1360,900',
+    'about:blank',
+  ],
+  { stdio: 'ignore' },
+)
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+async function until(fn, ms = 15000, step = 150) {
+  const t0 = Date.now()
+  while (Date.now() - t0 < ms) {
+    if (await fn()) return true
+    await sleep(step)
+  }
+  return false
+}
+
+async function pageTarget() {
+  let target = null
+  await until(async () => {
+    try {
+      const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json()
+      target = list.find((t) => t.type === 'page')
+      return Boolean(target)
+    } catch {
+      return false
+    }
+  }, 20000, 200)
+  if (!target) throw new Error('浏览器没起来（拿不到 CDP page target）')
+  return target
+}
+
+// 自检要连真后端：health 得是 200，不能靠「代理 500 也算离线」蒙过去。
+// 强制离线分支，避免 .env 里的真 key 让断言不稳定。
+const api = spawn(process.execPath, [join(root, 'service/server.mjs')], {
+  stdio: 'ignore',
+  env: { ...process.env, PORT: '3002', AMADEUS_FORCE_OFFLINE: '1' },
+})
+const apiUp = await until(async () => {
+  try {
+    return (await fetch('http://127.0.0.1:3002/api/health')).ok
+  } catch {
+    return false
+  }
+}, 10000, 200)
+if (!apiUp) console.warn('! 本地服务没起来（3002），/api 相关断言会按实际结果报')
+
+class CDP {
+  constructor(ws) {
+    this.ws = ws
+    this.id = 0
+    this.pending = new Map()
+    this.listeners = []
+    ws.addEventListener('message', (ev) => {
+      const msg = JSON.parse(ev.data)
+      if (msg.id && this.pending.has(msg.id)) {
+        const { ok, fail } = this.pending.get(msg.id)
+        this.pending.delete(msg.id)
+        msg.error ? fail(new Error(msg.error.message)) : ok(msg.result)
+      } else if (msg.method) {
+        for (const fn of this.listeners) fn(msg)
+      }
+    })
+  }
+  send(method, params = {}) {
+    const id = ++this.id
+    return new Promise((ok, fail) => {
+      this.pending.set(id, { ok, fail })
+      this.ws.send(JSON.stringify({ id, method, params }))
+    })
+  }
+  on(fn) {
+    this.listeners.push(fn)
+  }
+  async evaluate(expression) {
+    const res = await this.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })
+    if (res.exceptionDetails) throw new Error(res.exceptionDetails.exception?.description ?? '页面执行异常')
+    return res.result.value
+  }
+}
+
+const target = await pageTarget()
+const ws = new WebSocket(target.webSocketDebuggerUrl)
+await new Promise((ok, fail) => {
+  ws.addEventListener('open', ok, { once: true })
+  ws.addEventListener('error', fail, { once: true })
+})
+const cdp = new CDP(ws)
+
+await cdp.send('Runtime.enable')
+await cdp.send('Log.enable')
+await cdp.send('Page.enable')
+
+let jsErrors = []
+cdp.on((msg) => {
+  if (msg.method === 'Runtime.exceptionThrown') {
+    jsErrors.push(msg.params.exceptionDetails.exception?.description ?? msg.params.exceptionDetails.text)
+  }
+  if (msg.method === 'Log.entryAdded' && msg.params.entry.level === 'error') {
+    jsErrors.push(msg.params.entry.text)
+  }
+})
+
+const VIEWPORTS = [
+  { name: '桌面 1360x900', width: 1360, height: 900, mobile: false },
+  { name: '窄屏 390x780', width: 390, height: 780, mobile: true },
+]
+
+/** 导航要等真落地：about:blank 上读 localStorage 会抛 SecurityError（踩过） */
+async function goto(url) {
+  await cdp.send('Page.navigate', { url })
+  const landed = await until(async () => {
+    try {
+      return await cdp.evaluate("document.readyState !== 'loading' && location.href.indexOf('http') === 0")
+    } catch {
+      return false
+    }
+  }, 25000, 150)
+  if (!landed) throw new Error(`导航没落地：${url}`)
+  await sleep(500)
+}
+
+const allResults = []
+
+for (const vp of VIEWPORTS) {
+  jsErrors = []
+  await cdp.send('Emulation.setDeviceMetricsOverride', {
+    width: vp.width,
+    height: vp.height,
+    deviceScaleFactor: 1,
+    mobile: vp.mobile,
+  })
+  await goto(URL_ARG)
+  // 每轮从「没登录过」开始：清掉上一轮留下的可信度与设置
+  await cdp.evaluate('localStorage.clear()')
+  await goto(URL_ARG)
+
+  await cdp.evaluate(`window.__CHECK_LINES = ${JSON.stringify(voiceData.lines)}`)
+
+  const suite = `(async () => {
+  const results = []
+  const ok = (name, pass, detail = '') => results.push({ name, pass: !!pass, detail: String(detail) })
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+  const until = async (fn, ms = 12000, step = 120) => {
+    const t0 = Date.now()
+    while (Date.now() - t0 < ms) { if (await fn()) return true; await wait(step) }
+    return false
+  }
+  const L = window.__CHECK_LINES
+  const zhSet = new Set(L.map((l) => l.zh))
+  const dlg = () => document.querySelector('[role="log"]')
+  const dlgText = () => (dlg() ? dlg().innerText : '').trim()
+  const setVal = (el, v) => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+    setter.call(el, v)
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+  const byLabel = (label) => document.querySelector('[aria-label="' + label + '"]')
+  const btnByText = (txt) => [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === txt)
+
+  // ── 结构
+  const loginOk = await until(() => document.getElementById('callsign'))
+  ok('登录遮罩出现', loginOk, loginOk ? 'input#callsign 在' : '15s 内没出现')
+  ok('页面标题含干员名', document.title.includes('新约能天使'), document.title)
+
+  // ── 后端探测（经 vite 代理打到 service/server.mjs）
+  const health = await fetch('/api/health').then((r) => r.json()).catch((e) => ({ error: String(e) }))
+  ok('/api/health 走通且为未配置状态', health && health.configured === false,
+    JSON.stringify(health).slice(0, 120))
+
+  // ── 建立链接
+  setVal(document.getElementById('callsign'), '博士')
+  await wait(80)
+  document.querySelector('form button[type="submit"]').click()
+  await until(() => document.getElementById('official-voice'))
+  ok('语音播放器挂在 DOM 上', !!document.getElementById('official-voice'), 'querySelector 能找到才算数')
+
+  // 统计真的响过几次，比读 currentTime 稳（换行/随机命中同一句都不影响）
+  const audio = document.getElementById('official-voice')
+  window.__plays = 0
+  audio.addEventListener('playing', () => { window.__plays += 1 })
+
+  // ── 立绘真的解码了
+  const imgOk = await until(() => {
+    const im = document.querySelector('img[alt*="立绘"]')
+    return im && im.complete && im.naturalWidth > 0
+  }, 20000)
+  const im = document.querySelector('img[alt*="立绘"]')
+  ok('立绘真的加载', imgOk, im ? im.naturalWidth + 'x' + im.naturalHeight + ' @ ' + (im.currentSrc || '').slice(-28) : '找不到 img')
+
+  // ── 开场台词：打字机跑完 + 文本来自官方库
+  const typed = await until(() => dlg() && dlg().dataset.typing === 'false', 15000)
+  ok('打字机收敛（data-typing=false）', typed, 'data-typing=' + (dlg() ? dlg().dataset.typing : 'no-dialog'))
+  const first = dlgText()
+  ok('开场台词逐字来自官方台词库', zhSet.has(first), '实际=' + first.slice(0, 26))
+
+  // ── 官方语音真的出声（移动端可能被自动播放策略拦下，那就必须给出提示）
+  // 用 played TimeRanges 判定，不靠 playing 事件计数：事件可能在监听器装上之前就已经烧掉了
+  const hasPlayed = () => audio.played.length > 0 && audio.played.end(0) > 0
+  const played = await until(hasPlayed, 8000)
+  if (played) {
+    ok('官方语音真的开始播放', true,
+      'played 到 ' + audio.played.end(0).toFixed(2) + 's，src=' + (audio.currentSrc || '').split('/').pop() + ' dur=' + (audio.duration || 0).toFixed(2) + 's')
+  } else {
+    const hinted = await until(() => document.body.innerText.indexOf('拦截了自动播放') >= 0, 4000)
+    ok('自动播放被拦时有明确提示', hinted, hinted
+      ? '横幅：点一下开启语音'
+      : '既不播也不提示（paused=' + audio.paused + ' t=' + audio.currentTime.toFixed(2) + ' err=' + (audio.error ? audio.error.code : 'none') + '）')
+    const stageBtn0 = document.querySelector('button[title="戳一下"]')
+    if (stageBtn0) stageBtn0.click()
+    const after = await until(hasPlayed, 12000)
+    ok('用户点一下之后语音能播出', after, 'played 到 ' + (audio.played.length ? audio.played.end(0).toFixed(2) : '0') + 's，src=' + (audio.currentSrc || '').split('/').pop())
+  }
+  ok('官方音频时长已解码', audio.duration > 1, 'duration=' + (audio.duration || 0).toFixed(2) + 's')
+
+  // 精二立绘要到信赖 120 才出现在台上，容易一直是张 404 的图，这里直接验它能不能加载
+  const e2ok = await new Promise((res) => {
+    const probe = new Image()
+    probe.onload = () => res(probe.naturalWidth > 800)
+    probe.onerror = () => res(false)
+    probe.src = '/assets/立绘_2.png'
+  })
+  ok('精二立绘也能加载（升级后要换的那张）', e2ok, e2ok ? '立绘_2.png 可解码' : '取不到或尺寸异常')
+
+  // ── 戳一下：换台词 + 重新播放
+  const beforeSrc = audio.currentSrc
+  const beforeTapText = dlgText()
+  const beforeTapTime = audio.currentTime
+  const tapBtn = [...document.querySelectorAll('button')].find((b) => b.title === '戳一下')
+  ok('立绘可点击（戳一下）', !!tapBtn, tapBtn ? 'button[title=戳一下]' : '没找到')
+  if (tapBtn) {
+    tapBtn.click()
+    // 必须等文本真的变了：data-typing 本来就是 false，只等它等于 false 会量到上一条（假失败来源）
+    await until(() => dlg() && dlg().dataset.typing === 'false' && dlgText() !== beforeTapText, 12000)
+    const tapped = dlgText()
+    ok('戳一下返回官方台词', zhSet.has(tapped) && tapped !== beforeTapText, '实际=' + tapped.slice(0, 26))
+    const restarted = await until(
+      () => audio.currentSrc !== beforeSrc || audio.currentTime < beforeTapTime || !audio.paused,
+      8000,
+    )
+    ok('戳一下重新触发播放', restarted,
+      'src变化=' + (audio.currentSrc !== beforeSrc) + ' t=' + audio.currentTime.toFixed(2) + ' paused=' + audio.paused)
+  }
+
+  // ── 信赖度：页面自己的数字（progressbar 的可访问属性）vs 台词库解锁状态
+  const bar = document.querySelector('[role="progressbar"][aria-label="信赖度"]')
+  const trust = bar ? Number(bar.getAttribute('aria-valuenow')) : -1
+  ok('信赖度对外可读（progressbar aria-valuenow）', trust >= 0, bar ? 'aria-valuenow=' + trust : '找不到 progressbar')
+
+  byLabel('台词库').click()
+  const libOk = await until(() => document.querySelector('[role="dialog"][aria-label="台词库"]'))
+  ok('台词库面板打开', libOk)
+  if (libOk) {
+    const panel = document.querySelector('[role="dialog"][aria-label="台词库"]')
+    const items = [...panel.querySelectorAll('li button')]
+    ok('台词库条数与数据一致', items.length === L.length, 'UI=' + items.length + ' 数据=' + L.length)
+
+    const needOf = (l) => (!l.unlock ? 0 : l.unlock.kind === 'trust' ? l.unlock.value : l.unlock.value === 1 ? 60 : 120)
+    const expectLocked = L.filter((l) => needOf(l) > trust).length
+    const gotLocked = items.filter((b) => b.disabled).length
+    ok('解锁状态与信赖度一致', gotLocked === expectLocked, '锁定=' + gotLocked + ' 期望=' + expectLocked + '（信赖 ' + trust + '）')
+
+    const firstOpen = items.find((b) => !b.disabled)
+    ok('至少有一条已解锁台词可点', !!firstOpen, firstOpen ? firstOpen.innerText.split('\\n')[0] : '全锁')
+    if (firstOpen) {
+      const label = firstOpen.innerText
+      const beforeLib = dlgText()
+      firstOpen.click()
+      await until(() => dlg() && dlg().dataset.typing === 'false' && dlgText() !== beforeLib, 12000)
+      const shown = dlgText()
+      const source = L.find((l) => label.indexOf(l.zh.slice(0, 12)) >= 0)
+      ok('台词库播放后对话框逐字一致', source ? shown === source.zh : false,
+        source ? '期望=' + source.zh.slice(0, 20) + ' 实际=' + shown.slice(0, 20) : '在数据里找不到这条')
+    }
+    const badge = document.body.innerText.includes('官方语音')
+    ok('官方语音有角标', badge, badge ? '角标在' : '没找到「官方语音」')
+    byLabel('关闭').click()
+    await until(() => !document.querySelector('[role="dialog"][aria-label="台词库"]'))
+  }
+
+  // ── 文字对话（没有配置模型时走本地人格模式）
+  const beforeSend = dlgText()
+  const input = byLabel('输入框')
+  ok('输入框存在', !!input)
+  setVal(input, '老板在吗，今天有我的快递吗')
+  await wait(80)
+  const sendBtn = btnByText('发送')
+  ok('发送按钮可用', !!sendBtn && !sendBtn.disabled, sendBtn ? 'disabled=' + sendBtn.disabled : '没找到')
+  sendBtn.click()
+  await until(() => dlg() && dlg().dataset.typing === 'false' && dlgText() !== beforeSend, 15000)
+  const replied = dlgText()
+  ok('本地模式回复只引用官方台词（不编造）', zhSet.has(replied) || replied.indexOf('本地人格模式') >= 0,
+    zhSet.has(replied) ? '命中台词库' : '模板回复：' + replied.slice(0, 26))
+  ok('界面明说当前是本地人格模式', document.body.innerText.indexOf('本地人格模式') >= 0, '看不出模式会让人误以为是真模型')
+
+  // ── 开关类：语音静音要真的落盘
+  const muteBtn = byLabel('关闭语音')
+  ok('语音开关可点', !!muteBtn)
+  if (muteBtn) {
+    muteBtn.click()
+    await wait(120)
+    ok('静音后按钮状态翻转', !!byLabel('开启语音'), '开启语音按钮=' + !!byLabel('开启语音'))
+    let saved = null
+    try { saved = JSON.parse(localStorage.getItem('amadeus.exusiai.v1')) } catch (e) {}
+    ok('设置已持久化到 localStorage', saved && saved.config && saved.config.voice === false,
+      saved ? 'voice=' + saved.config.voice : '读不到存档')
+    byLabel('开启语音').click()
+    await wait(80)
+  }
+
+  // ── 情绪标签
+  ok('情绪标签已渲染', /平静|兴奋|微笑|从容|不好意思|上火|低落|兴致不高/.test(document.body.innerText),
+    (document.body.innerText.match(/平静|兴奋|微笑|从容|不好意思|上火|低落|兴致不高/) || ['无'])[0])
+
+  // ── 版式：横向溢出是性价比最高的回归断言
+  const sw = document.documentElement.scrollWidth
+  const iw = window.innerWidth
+  ok('无横向溢出', sw <= iw + 1, 'scrollWidth=' + sw + ' innerWidth=' + iw)
+
+  // ── 对话框与立绘在同一屏内可见
+  const box = dlg() ? dlg().getBoundingClientRect() : null
+  ok('对话框在视口内', !!box && box.top >= 0 && box.bottom <= window.innerHeight + 1,
+    box ? 'top=' + Math.round(box.top) + ' bottom=' + Math.round(box.bottom) + ' vh=' + window.innerHeight : '无对话框')
+
+  return { results, trust, plays: window.__plays }
+})()`
+
+  const out = await cdp.evaluate(suite)
+  for (const r of out.results) allResults.push({ vp: vp.name, ...r })
+  allResults.push({ vp: vp.name, name: '无未捕获异常 / 无 console error', pass: jsErrors.length === 0, detail: jsErrors.join(' | ').slice(0, 300) || '0 条' })
+  allResults.push({ vp: vp.name, name: '真实播放次数', pass: out.plays > 0, detail: out.plays + ' 次 playing 事件' })
+}
+
+// ── 无 JS 回退：SPA 全靠 JS，所以必须有 noscript 兜底
+await cdp.send('Emulation.setScriptExecutionDisabled', { value: true })
+await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1360, height: 900, deviceScaleFactor: 1, mobile: false })
+await cdp.send('Page.navigate', { url: URL_ARG })
+await sleep(1500)
+const noJsText = await cdp.evaluate('document.body.innerText')
+allResults.push({
+  vp: '无 JS',
+  name: '禁用脚本时仍有可读内容',
+  pass: typeof noJsText === 'string' && noJsText.includes('新约能天使') && noJsText.length > 40,
+  detail: (noJsText || '').replace(/\s+/g, ' ').slice(0, 80),
+})
+await cdp.send('Emulation.setScriptExecutionDisabled', { value: false })
+
+const failed = allResults.filter((r) => !r.pass)
+let currentVp = ''
+for (const r of allResults) {
+  if (r.vp !== currentVp) {
+    currentVp = r.vp
+    console.log(`\n── ${r.vp} ──`)
+  }
+  console.log(`${r.pass ? 'PASS' : 'FAIL'}  ${r.name}${r.detail ? '   [' + r.detail + ']' : ''}`)
+}
+console.log(`\n共 ${allResults.length} 项检查，失败 ${failed.length} 项`)
+
+ws.close()
+child.kill()
+api.kill()
+await sleep(300)
+await rm(profile, { recursive: true, force: true }).catch(() => {})
+process.exit(failed.length ? 1 : 0)
