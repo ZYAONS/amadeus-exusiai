@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Stage from './components/Stage'
+import ModelStage from './components/ModelStage'
+import Hud from './components/Hud'
 import DialogBox from './components/DialogBox'
 import ParticleField from './components/ParticleField'
 import Toolbar from './components/Toolbar'
@@ -13,6 +15,9 @@ import { classifyEmotion, type Emotion } from './lib/emotion'
 import { offlineReply } from './lib/offlinePersona'
 import { IDLE_POOL, LINES, TOUCH_POOL, lineText, type VoiceLang, type VoiceLine } from './lib/operator'
 import { unlockedLines } from './lib/trust'
+import modelRecord from './data/model.json'
+
+const MODEL = modelRecord as { file: string | null; demo?: boolean }
 import { playOfficial, resetVoiceCache, speak, stopOfficial, stopSpeaking } from './lib/audio'
 
 type SheetKind = 'history' | 'voices' | 'config' | null
@@ -32,6 +37,8 @@ export default function App() {
   const [listening, setListening] = useState(false)
   const [sheet, setSheet] = useState<SheetKind>(null)
   const [playingNo, setPlayingNo] = useState<number | undefined>()
+  // 3D 舞台的记录来自 src/data/model.json（模型文件本身在 public/assets/model/，不入库）
+  const [modelFailed, setModelFailed] = useState<string | null>(null)
 
   const busyRef = useRef(false)
   const sendRef = useRef<(t: string) => void>(() => {})
@@ -46,6 +53,9 @@ export default function App() {
     const w = window as unknown as Record<string, unknown>
     return Boolean(w.SpeechRecognition || w.webkitSpeechRecognition)
   }, [])
+
+  const modelUrl = MODEL.file ? `/assets/model/${MODEL.file}` : null
+  const use3d = Boolean(modelUrl) && !modelFailed && s.config.stage === '3d'
 
   // 官方语音播放器的说话状态，直接读真实媒体事件
   useEffect(() => {
@@ -251,7 +261,9 @@ export default function App() {
           }}
         />
         <ParticleField />
-        <Stage emotion="smile1" speaking={false} listening={false} trust={0} onTap={() => {}} />
+        <div className="emotion-smile1 absolute inset-0 select-none">
+          <Stage trust={0} onTap={() => {}} />
+        </div>
         <LoginOverlay
           onEnter={(name) => {
             s.signIn(name)
@@ -273,7 +285,30 @@ export default function App() {
       />
       <ParticleField />
 
-      <Stage emotion={emotion} speaking={speaking} listening={listening} trust={s.trust} onTap={tapStage} />
+      <div className={`emotion-${emotion} absolute inset-0 select-none`}>
+        {use3d && modelUrl ? (
+          <ModelStage
+            url={modelUrl}
+            emotion={emotion}
+            speaking={speaking}
+            onTap={tapStage}
+            onFail={(reason) => {
+              console.warn('[3d] 模型加载失败，退回立绘：', reason)
+              setModelFailed(reason)
+            }}
+          />
+        ) : (
+          <Stage trust={s.trust} onTap={tapStage} />
+        )}
+      </div>
+
+      <Hud emotion={emotion} speaking={speaking} listening={listening} trust={s.trust} />
+
+      {use3d && MODEL.demo && (
+        <div className="pointer-events-none absolute left-1/2 top-24 z-20 -translate-x-1/2 border border-[rgba(255,179,71,0.5)] bg-[rgba(8,8,11,0.86)] px-2 py-1 font-hud text-[10px] tracking-[0.2em] text-[var(--po-amber)]">
+          占位模型 · 换成真模型见 README
+        </div>
+      )}
 
       <div className="absolute left-5 top-1/2 hidden -translate-y-1/2 font-hud text-[10px] leading-[1.9] text-[var(--po-muted)] opacity-60 md:block">
         <div>AMADEUS // TERRA</div>
@@ -366,6 +401,7 @@ export default function App() {
         config={s.config}
         trust={s.trust}
         name={s.name}
+        hasModel={Boolean(modelUrl) && !modelFailed}
         onConfig={s.setConfig}
         onResetVoice={resetVoiceCache}
         onClearHistory={s.clearHistory}

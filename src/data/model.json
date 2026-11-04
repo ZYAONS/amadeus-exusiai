@@ -1,0 +1,4 @@
+{
+  "file": null,
+  "note": "3D 舞台的模型记录。file 为 null 表示没有模型，舞台用官方立绘。用 node tools/fetch-model.mjs 你的模型.glb 写入；模型文件本身在 public/assets/model/ 里，不入库。"
+}

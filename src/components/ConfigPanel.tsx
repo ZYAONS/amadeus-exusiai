@@ -10,6 +10,7 @@ type Props = {
   config: Config
   trust: number
   name: string
+  hasModel: boolean
   onConfig: (patch: Partial<Config>) => void
   onResetVoice: () => void
   onClearHistory: () => void
@@ -65,6 +66,7 @@ export default function ConfigPanel({
   config,
   trust,
   name,
+  hasModel,
   onConfig,
   onResetVoice,
   onClearHistory,
@@ -90,6 +92,24 @@ export default function ConfigPanel({
           <Row label="闲置时主动说话">
             <Switch on={config.autoIdle} onClick={() => onConfig({ autoIdle: !config.autoIdle })} label="闲置时主动说话" />
           </Row>
+          <Row label="舞台人物">
+            <select
+              value={hasModel ? config.stage : '2d'}
+              disabled={!hasModel}
+              onChange={(e) => onConfig({ stage: e.target.value as Config['stage'] })}
+              aria-label="舞台人物"
+              className="border border-[var(--po-line)] bg-[rgba(16,16,24,0.9)] px-2 py-1 font-hud text-[11px] disabled:opacity-50"
+            >
+              <option value="3d">3D 模型</option>
+              <option value="2d">官方立绘</option>
+            </select>
+          </Row>
+          {!hasModel && (
+            <p className="mt-1 border-l-2 border-[var(--po-line)] pl-2 text-[11px] leading-relaxed text-[var(--po-muted)]">
+              没检测到模型文件。把 .glb 放进 <span className="text-[var(--po-halo)]">public/assets/model/</span>，
+              或跑 <span className="text-[var(--po-halo)]">node tools/fetch-model.mjs 你的文件.glb</span>。
+            </p>
+          )}
           <Row label="配音与台词语言">
             <select
               value={config.lang}

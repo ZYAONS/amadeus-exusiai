@@ -10,16 +10,20 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "setup": "node tools/build-voice-data.mjs && node tools/fetch-assets.mjs",
+    "model": "node tools/fetch-model.mjs",
+    "model:demo": "node tools/make-demo-model.mjs",
     "check": "node tools/check.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.469.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "three": "^0.171.0"
   },
   "devDependencies": {
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
+    "@types/three": "^0.171.0",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",

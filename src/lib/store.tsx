@@ -21,9 +21,11 @@ export type Config = {
   autoIdle: boolean
   /** 配音与台词用哪种语言：中文（voice_cn）还是日配（voice） */
   lang: VoiceLang
+  /** 舞台用 3D 模型还是官方立绘；没有模型文件时恒为立绘 */
+  stage: '3d' | '2d'
 }
 
-const DEFAULT_CONFIG: Config = { voice: true, tts: true, autoIdle: true, lang: 'zh' }
+const DEFAULT_CONFIG: Config = { voice: true, tts: true, autoIdle: true, lang: 'zh', stage: '3d' }
 const KEY = 'amadeus.exusiai.v1'
 
 type Save = { name: string; trust: number; messages: Msg[]; config: Config }

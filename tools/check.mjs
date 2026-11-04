@@ -26,6 +26,7 @@ if (!browserPath) {
 }
 
 const voiceData = JSON.parse(await readFile(join(root, 'src/data/voice-lines.json'), 'utf8'))
+const modelRecord = JSON.parse(await readFile(join(root, 'src/data/model.json'), 'utf8'))
 
 const profile = await mkdtemp(join(tmpdir(), 'amadeus-check-'))
 
@@ -39,6 +40,7 @@ const child = spawn(
     '--no-first-run',
     '--no-default-browser-check',
     '--disable-gpu',
+    '--enable-unsafe-swiftshader', // 无头下没有 GPU，WebGL 要靠 SwiftShader，缺这个 flag 会直接拿不到上下文
     '--window-size=1360,900',
     'about:blank',
   ],
@@ -174,9 +176,14 @@ for (const vp of VIEWPORTS) {
   await goto(URL_ARG)
   // 每轮从「没登录过」开始：清掉上一轮留下的可信度与设置
   await cdp.evaluate('localStorage.clear()')
+  // 先钉住 2D 舞台（哪怕装了模型）：这样立绘相关的断言稳定，3D 由后面的断言显式切换
+  await cdp.evaluate(
+    `localStorage.setItem('amadeus.exusiai.v1', JSON.stringify({ config: { stage: '2d' } }))`,
+  )
   await goto(URL_ARG)
 
   await cdp.evaluate(`window.__CHECK_LINES = ${JSON.stringify(voiceData.lines)}`)
+  await cdp.evaluate(`window.__CHECK_MODEL = ${JSON.stringify(modelRecord)}`)
 
   const suite = `(async () => {
   const results = []
@@ -199,6 +206,11 @@ for (const vp of VIEWPORTS) {
   }
   const byLabel = (label) => document.querySelector('[aria-label="' + label + '"]')
   const btnByText = (txt) => [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === txt)
+  const setSelect = (el, v) => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set
+    setter.call(el, v)
+    el.dispatchEvent(new Event('change', { bubbles: true }))
+  }
 
   // ── 结构
   const loginOk = await until(() => document.getElementById('callsign'))
@@ -343,11 +355,6 @@ for (const vp of VIEWPORTS) {
     const sel = byLabel('配音与台词语言')
     ok('语言选择器存在', !!sel, sel ? 'aria-label 命中' : '没找到')
     if (sel) {
-      const setSelect = (el, v) => {
-        const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set
-        setter.call(el, v)
-        el.dispatchEvent(new Event('change', { bubbles: true }))
-      }
       setSelect(sel, 'jp')
       await wait(150)
       let saved = null
@@ -381,6 +388,40 @@ for (const vp of VIEWPORTS) {
     ok('一键切回中文后台词变回中文', zhSet.has(backZh), '实际=' + backZh.slice(0, 22))
     const zhAudio = await until(() => (audio.currentSrc || '').indexOf('/voice/zh/') > 0, 8000)
     ok('一键切回中文后播的是中配', zhAudio, 'src=' + (audio.currentSrc || '').split('/').slice(-3).join('/'))
+  }
+
+  // ── 3D 舞台：没有模型文件就明说跳过，不假装测过
+  const rec = window.__CHECK_MODEL || {}
+  if (!rec.file) {
+    ok('3D 舞台跳过：没有模型文件', true, 'src/data/model.json 的 file 为 null；造个占位模型：npm run model:demo')
+    ok('没有模型时不加载 three.js', true, 'ModelStage 是动态 import，模型不存在就不会下载那 600KB')
+  } else {
+    byLabel('设置与档案').click()
+    await until(() => document.querySelector('[role="dialog"][aria-label="终端设置"]'))
+    const stageSel = byLabel('舞台人物')
+    ok('舞台切换项可用', !!stageSel && !stageSel.disabled,
+      stageSel ? 'disabled=' + stageSel.disabled : '没找到')
+    if (stageSel) setSelect(stageSel, '3d')
+    byLabel('关闭').click()
+    const ready = await until(() => document.querySelector('[data-model="ready"]'), 30000)
+    const host3d = document.querySelector('[data-model]')
+    ok('GLB 真的被解析并上台', ready,
+      host3d ? 'data-model=' + host3d.getAttribute('data-model') + ' height=' + host3d.getAttribute('data-height') + ' anims=' + host3d.getAttribute('data-anims') : '没有 3D 容器')
+    ok('高度是从几何算出来的包围盒', Number(host3d && host3d.getAttribute('data-height')) > 0.3,
+      'data-height=' + (host3d && host3d.getAttribute('data-height')))
+    const tris = await until(() => Number((document.querySelector('[data-model]') || {}).dataset?.tris) > 0, 10000)
+    ok('WebGL 真的光栅化了三角形', tris,
+      'data-tris=' + ((document.querySelector('[data-model]') || {}).dataset?.tris ?? '未写回（WebGL 没跑起来）'))
+    const cvs = document.querySelector('[data-model] canvas')
+    ok('画布尺寸非零', !!cvs && cvs.width > 0 && cvs.height > 0,
+      cvs ? cvs.width + 'x' + cvs.height : '没有 canvas')
+    // 切回立绘：3D 到 2D 的降级路径也得通
+    byLabel('设置与档案').click()
+    await until(() => byLabel('舞台人物'))
+    setSelect(byLabel('舞台人物'), '2d')
+    byLabel('关闭').click()
+    const back2d = await until(() => document.querySelector('img[alt*="立绘"]'), 8000)
+    ok('能切回官方立绘', back2d, back2d ? '立绘回来了' : '切不回 2D')
   }
 
   // ── 开关类：语音静音要真的落盘
