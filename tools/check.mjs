@@ -415,6 +415,28 @@ for (const vp of VIEWPORTS) {
     const cvs = document.querySelector('[data-model] canvas')
     ok('画布尺寸非零', !!cvs && cvs.width > 0 && cvs.height > 0,
       cvs ? cvs.width + 'x' + cvs.height : '没有 canvas')
+
+    // 点模型算「戳一下」：这条路径是手写的 pointer 事件，最容易写了没接上。
+    // 别用「文本变了」当判据——随机挑台词可能连着两次挑到同一句（真踩过），
+    // 用「记录多了一条」当判据，稳定且同样是运行出来的事实。
+    if (cvs) {
+      await until(() => dlg() && dlg().dataset.typing === 'false' && zhSet.has(dlgText()), 15000)
+      const countMsgs = () => {
+        try {
+          return JSON.parse(localStorage.getItem('amadeus.exusiai.v1')).messages.length
+        } catch (e) {
+          return -1
+        }
+      }
+      const msgsBefore = countMsgs()
+      cvs.dispatchEvent(new PointerEvent('pointerdown', { clientX: 120, clientY: 120, bubbles: true }))
+      window.dispatchEvent(new PointerEvent('pointerup', { clientX: 120, clientY: 120 }))
+      const grew = await until(() => countMsgs() > msgsBefore, 12000)
+      ok('点 3D 模型会记一条新台词', grew, '记录数 ' + msgsBefore + ' -> ' + countMsgs())
+      const settled = await until(() => dlg() && dlg().dataset.typing === 'false' && zhSet.has(dlgText()), 15000)
+      ok('点 3D 模型后对话框是官方台词', settled,
+        'zhSet=' + zhSet.has(dlgText()) + ' len=' + dlgText().length + ' 实际=' + JSON.stringify(dlgText().slice(0, 20)))
+    }
     // 切回立绘：3D 到 2D 的降级路径也得通
     byLabel('设置与档案').click()
     await until(() => byLabel('舞台人物'))
@@ -422,6 +444,21 @@ for (const vp of VIEWPORTS) {
     byLabel('关闭').click()
     const back2d = await until(() => document.querySelector('img[alt*="立绘"]'), 8000)
     ok('能切回官方立绘', back2d, back2d ? '立绘回来了' : '切不回 2D')
+
+    // 再进一次：反复切换最容易漏 WebGL 上下文和 canvas
+    byLabel('设置与档案').click()
+    await until(() => byLabel('舞台人物'))
+    setSelect(byLabel('舞台人物'), '3d')
+    byLabel('关闭').click()
+    const again = await until(() => {
+      const h = document.querySelector('[data-model]')
+      return h && h.dataset.model === 'ready'
+    }, 30000)
+    const hostCanvases = document.querySelectorAll('[data-model] canvas').length
+    const allCanvases = document.querySelectorAll('canvas').length
+    ok('3D 可以反复进入', again, again ? '第二次仍然 ready' : '第二次没起来')
+    ok('来回切换没留下多余 canvas', hostCanvases === 1,
+      '宿主内 canvas=' + hostCanvases + '，页面全部 canvas=' + allCanvases + '（其中 1 个是粒子背景）')
   }
 
   // ── 开关类：语音静音要真的落盘

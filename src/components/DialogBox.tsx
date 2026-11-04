@@ -20,24 +20,34 @@ type Props = {
 
 /** 打字机：data-typing 是给自检用的——动画没走完就断言文本，会得到一屏假失败 */
 function useTypewriter(text: string, streaming: boolean) {
-  const [shown, setShown] = useState('')
+  // state 里带上「这段 shown 是给哪段 text 用的」：
+  // 只比长度的话，文本刚换、reveal 还没跑的那一帧会把旧文本判成「打完了」（真踩过）
+  const [state, setState] = useState<{ forText: string; shown: string }>({ forText: '', shown: '' })
   const raf = useRef(0)
+
   useEffect(() => {
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     if (reduce || streaming) {
-      setShown(text)
+      setState({ forText: text, shown: text })
       return
     }
-    let i = 0
+    // 按「经过的时间」算进度，不按帧数累加：标签页被节流、rAF 掉帧时，
+    // 下一帧会一次追平；按帧累加则会永远停在半句（真踩过，自检里 len=26/60）
+    const duration = Math.min(1400, Math.max(350, text.length * 18))
+    const start = performance.now()
     cancelAnimationFrame(raf.current)
     const tick = () => {
-      i += Math.max(1, Math.round(text.length / 90))
-      setShown(text.slice(0, i))
-      if (i < text.length) raf.current = requestAnimationFrame(tick)
+      const p = Math.min(1, (performance.now() - start) / duration)
+      setState({ forText: text, shown: text.slice(0, Math.round(text.length * p)) })
+      if (p < 1) raf.current = requestAnimationFrame(tick)
     }
     raf.current = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf.current)
   }, [text, streaming])
+
+  // 文本换了但 reveal 还没开始：当成「正在打」，别让外面读到上一句
+  const fresh = state.forText === text
+  const shown = fresh ? state.shown : ''
   return { shown, typing: shown.length < text.length }
 }
 

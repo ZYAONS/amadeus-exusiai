@@ -44,20 +44,28 @@ node tools/fetch-model.mjs D:\下载\新约能天使.glb   # 手头已经有 .gl
 npm run model:demo                                # 只想看看 3D 链路通不通（生成一个方盒子，不是她）
 ```
 
-手头是 `.blend` 的话用现成的导出脚本（这台机器上 Blender 在 `D:\Blender\4.2\blender.exe`，4.2.9 LTS）：
+手头是 `.blend` 的话用现成的导出脚本（这台机器上 Blender 在 `D:\Blender\4.2\blender.exe`，4.2.9 LTS）。现在台上这位就是这么来的：
 
 ```bash
-"D:\Blender\4.2\blender.exe" -b "你的模型.blend" --python tools/blender-export-glb.py -- "D:\agentle\out.glb"
-node tools/fetch-model.mjs "D:\agentle\out.glb"
+"D:\Blender\4.2\blender.exe" -b "mod\新约阿能v2分享.blend" --python tools/blender-export-glb.py -- "_ref\exusiai.glb" --max-tex 1024
+node tools/fetch-model.mjs "_ref\exusiai.glb"
 ```
 
-脚本已经在 4.2 上跑通过（网格 + 骨架 + 关键帧 → GLB → 上台，自检里那条 `anims=1` 就是它）。它开了 `export_apply`（应用修改器）和 `export_yup`（Blender 的 Z 轴朝上转成 glTF 的 Y 轴朝上）——这两个不写，模型上台要么缺头发细分，要么躺平在地上。`.pmx` 这类 MMD 模型只能先在 Blender 里用 mmd_tools 导入再导出。
+原始 `.blend` 是 301 MB、著作权不在本项目，`mod/` 已在 `.gitignore` 里。导出脚本在这份模型上踩到三件事，换成别的 MMD 风模型同样会遇到：
 
-`fetch-model.mjs` 会校验文件头、从 POSITION 的 min/max 算出模型高度、记 SHA-256 到 `src/data/model.json`；模型文件本身落在 `public/assets/model/`，不入库。上台时会归一化到 1.7 高、脚踩 `y=0`、水平居中，取景距离按高度算，所以模型原来多大、原点在哪都不用管；GLB 里带的第一条动画会自动播，拖动可转视角，点一下算「戳一下」。
+**一、rigify 的控制器会被一起导出。** `use_selection=False` 会把三个 `WGTS_*` 集合里 100 个控制器网格、13 盏灯、相机全带上，体积翻几倍。脚本改成只挑「可见且名字不以 `WGT-` 开头」的对象。
+
+**二、脸和眼睛没有 Principled BSDF。** 它们是 MMD/toon 节点（`TEX_IMAGE → HUE_SAT → 自定义节点组 → 输出`），glTF 导出器只认 Principled，于是整张脸导出去是一片没有五官的皮肤色。脚本从输出节点的 Surface 顺着链接往回追，找到真正喂颜色的那张图再压成 Principled。别按「节点树里最大的图」猜——那会把身体材质猜成脸的贴图（第一次就这么错的）。
+
+**三、压平之后 alpha 怎么设，导出器说了算。** 脸是好几层重叠贴片，用半透明混合会互相透成鬼影；但 Blender 4.2 的导出器不读 `blend_method` 也不读 `surface_render_method`，它认的是节点形状——Alpha 前面挂一个 `Math: GREATER_THAN(0.5)` 才导出 `alphaMode=MASK`（源码里的 `detect_alpha_clip`）。眼睛高光那片单独走 BLEND，否则会变成一块白斑。
+
+结果：38 个网格、74.7 万三角形、24.95 MB（贴图 4K→1024，脸和眼睛留 2048）。`anims=0` —— 这份 `.blend` 里一条动作都没有，所以台上的她是静态姿态，靠运行时的呼吸、微摆和轮廓光活着。
+
+`fetch-model.mjs` 会校验 GLB 文件头、记 SHA-256 到 `src/data/model.json`；模型文件本身落在 `public/assets/model/`，不入库。上台时会归一化到 1.7 高、脚踩 `y=0`、水平居中，取景距离按高度算，所以模型原来多大、原点在哪都不用管；GLB 里带的第一条动画会自动播，拖动可转视角，点一下算「戳一下」。
 
 three.js 是动态 import 的，没有模型文件时三件事一起省掉：那几百 KB 不下载、`ModelStage` 被摇树摇掉、连 chunk 都不会生成。所以 `npm run dev` 下放好模型刷新就行，部署 `dist` 的话得重新 `npm run build`（模型记录是构建期内联的）。加载失败或浏览器给不出 WebGL 时退回立绘，原因打在控制台。
 
-模之屋那个[新约能天使 v2](https://www.aplaybox.com/details/model/62ZSh6wZ3Alg)我只能确认到作者用 Blender 做的（身体 arp、面部 faceit、rigify 绑骨），下载要登录并满足作者设的规则，页面弹的是 “Download rules are not met”，所以仓库里没有它的文件。你下下来导出 GLB 跑上面第一条命令就能接上。
+模型出处：[模之屋 · 新约能天使 v2 版分享](https://www.aplaybox.com/details/model/62ZSh6wZ3Alg)（作者用 Blender 做的，身体 arp、面部 faceit、rigify 绑骨）。要按原作者的条款使用，别拿去商用或二次配布。
 
 ## 对话之外
 
@@ -76,6 +84,7 @@ src/data/model.json    3D 模型记录（file 为 null 表示用立绘）
 service/server.mjs     OpenAI 兼容端点 → SSE，兼静态托管 dist
 tools/fetch-assets.mjs 取立绘与配音并核对 SHA-256
 tools/fetch-model.mjs  接本地 3D 模型（校验 + 记录）
+tools/blender-export-glb.py  .blend → GLB：挑对象、压平 toon 材质、降采样贴图
 tools/make-demo-model.mjs  自造占位 GLB，用来验证 3D 链路
 tools/check.mjs        无头浏览器自检
 tools/prts/            干员页与语音记录的原始 wikitext（数据从它解析出来的）
@@ -89,13 +98,15 @@ npm run check                                        # 测开发服务器
 npm run check -- http://127.0.0.1:3002/              # 测构建产物
 ```
 
-无头 Edge + CDP 真跑一遍，桌面 1360×900 与窄屏 390×780 各一遍，外加禁用脚本的一遍，合计 80 多项断言（移动端自动播放被拦时会多出两条分支断言；装了模型文件时会多 8 条 3D 断言，数目不固定）。它自己会起一个强制离线的 `service/`，所以 `.env` 里有真 key 也不影响结果。
+无头 Edge + CDP 真跑一遍，桌面 1360×900 与窄屏 390×780 各一遍，外加禁用脚本的一遍。有模型文件时 103 项；没有模型时 3D 那组会明确标成 PASS 并写明「跳过」的原因，总数随之减少（移动端自动播放被拦时另会多出两条分支断言，数目不固定）。它自己会起一个强制离线的 `service/`，所以 `.env` 里有真 key 也不影响结果。
 
-断言里比较关键的是这几条：立绘真的解码出像素（`naturalWidth > 0`），官方语音真的播过（`audio.played` 走到了非零秒），界面显示的台词与 `voice-lines.json` 逐字一致（中配日配各验一遍，并验音频文件真的换到了 `/voice/jp/`），锁定台词条数与信赖度算出来的期望值一致，两个视口都没有横向溢出，控制台没有未捕获异常。
+断言里比较关键的是这几条：立绘真的解码出像素（`naturalWidth > 0`），官方语音真的播过（`audio.played` 走到了非零秒），界面显示的台词与 `voice-lines.json` 逐字一致（中配日配各验一遍，并验音频文件真的换到了 `/voice/jp/`），锁定台词条数与信赖度算出来的期望值一致，GLB 真被解析（`data-height` 是从几何算的 1.86）且 WebGL 真光栅化了 74.7 万个三角形，3D→2D→3D 来回切不留多余 canvas，两个视口都没有横向溢出，控制台没有未捕获异常。
 
 ## 素材与版权
 
 立绘、语音、台词文本、干员档案数据著作权归上海鹰角网络科技有限公司所有，本项目仅作个人学习用途。仓库里只放地址和 SHA-256（`assets.manifest.json`），文件靠脚本现取现核对，不随代码分发；中配与日配都来自 PRTS 的官方资源目录。
+
+3D 模型是模之屋上作者分享的同人作品，著作权归原作者；原始 `.blend`（301 MB）和导出的 GLB（25 MB）都不入库，`.gitignore` 已挡住 `mod/`、`*.blend`、`*.glb`。要用请看原发布页的条款。
 
 换素材时 `node tools/fetch-assets.mjs --force`，校验值对不上会打警告。
 
@@ -103,7 +114,9 @@ npm run check -- http://127.0.0.1:3002/              # 测构建产物
 
 2D 舞台是静态立绘加呼吸和光影，没有 Live2D 或 Spine 骨架；游戏里也没有平面骨骼可以白拿。
 
-3D 舞台只认 glTF（`.glb`，VRM 也行），并且只驱动模型的整体：没有骨骼重定向、不驱动表情 morph、不按口型开合，说话时只是轻微起伏和轮廓光变化。模型自带的 morph 和骨骼名千差万别，硬猜不如留给以后。
+3D 舞台只认 glTF（`.glb`，VRM 也行），并且只驱动模型的整体：没有骨骼重定向、不驱动表情 morph、不按口型开合，说话时只是轻微起伏和轮廓光变化。模型自带的 morph 和骨骼名千差万别，硬猜不如留给以后。台上这位是伸手的 A-pose —— 作者没做动作，导出时也没改她的姿势。
+
+74.7 万三角形 + 24.95 MB 的 GLB，首屏要等几秒（本机测 2.4 秒到 ready），低端机或第一次冷加载会更久。想更瘦可以 `--max-tex 512` 重导，或给导出加 Draco 压缩（要配 DRACOLoader，没做）。
 
 语音识别用浏览器的 Web Speech API，Chrome 与 Edge 可用，Firefox 不行，此时输入框照常打字。
 

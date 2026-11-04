@@ -92,9 +92,9 @@ export default function ModelStage({ url, emotion, speaking, onTap, onFail }: Pr
         model.position.z -= (box.min.z + box.max.z) / 2
         pivot.add(model)
 
-        // 取景按比例算，不写死距离：换任何模型都拍得全，留 25% 余量
+        // 取景按比例算，不写死距离：换任何模型都拍得全，留 12% 余量
         const fov = 32
-        const dist = (TARGET_H * 1.25) / (2 * Math.tan((fov * Math.PI) / 360))
+        const dist = (TARGET_H * 1.12) / (2 * Math.tan((fov * Math.PI) / 360))
         camera.fov = fov
         camera.position.set(0, TARGET_H * 0.55, dist)
         camera.lookAt(0, TARGET_H * 0.5, 0)
@@ -197,7 +197,7 @@ export default function ModelStage({ url, emotion, speaking, onTap, onFail }: Pr
       data-model={status}
       data-height={meta.height}
       data-anims={meta.anims}
-      className="absolute inset-x-0 bottom-[22vh] top-[14vh] mx-auto w-[min(92vw,760px)] cursor-grab active:cursor-grabbing"
+      className="absolute inset-x-0 bottom-[20vh] top-[10vh] mx-auto w-[min(92vw,760px)] cursor-grab active:cursor-grabbing"
     >
       <div
         aria-hidden

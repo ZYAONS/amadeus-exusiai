@@ -8,3 +8,8 @@ public/assets/
 _ref/
 *.log
 .*.tmpdir/
+
+# 作者的 .blend 与导出的 GLB：体积大，著作权也不在本项目
+mod/
+*.blend
+*.glb

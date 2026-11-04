@@ -11,7 +11,8 @@ export default defineConfig({
     proxy: {
       '/api': { target: 'http://127.0.0.1:3002', changeOrigin: true },
     },
-    // 编辑器/工具写入时的临时目录会被 watcher 抓到并 EBUSY（真踩过），直接忽略
-    watch: { ignored: ['**/.*.tmpdir/**', '**/.*.tmp'] },
+    // 编辑器/工具写入时的临时目录会被 watcher 抓到并 EBUSY（真踩过）；
+    // public/assets 是静态素材，几十 MB 的模型文件一放进去就能把 watcher 顶死，一律不监视
+    watch: { ignored: ['**/.*.tmpdir/**', '**/.*.tmp', '**/public/assets/**'] },
   },
 })

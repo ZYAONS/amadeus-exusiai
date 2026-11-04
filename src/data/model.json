@@ -1,4 +1,9 @@
 {
-  "file": null,
-  "note": "3D 舞台的模型记录。file 为 null 表示没有模型，舞台用官方立绘。用 node tools/fetch-model.mjs 你的模型.glb 写入；模型文件本身在 public/assets/model/ 里，不入库。"
+  "file": "character.glb",
+  "sha256": "256b1d499b066af6a23dc5da285bae9ddb90f2aa20fd2177d6476298a68adb5c",
+  "bytes": 26157356,
+  "height": 12.727,
+  "source": "exusiai8.glb",
+  "addedAt": "2026-11-04T06:50:59.322Z",
+  "note": "模型著作权归原作者所有，请遵守原发布页的使用条款；本仓库不收录模型文件。"
 }

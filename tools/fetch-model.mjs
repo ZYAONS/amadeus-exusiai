@@ -45,12 +45,25 @@ if (ext === '.gltf') {
   if (magic !== 0x46546c67) throw new Error('不是 GLB（魔数不是 glTF）')
   if (version !== 2) throw new Error(`GLB 版本是 ${version}，只支持 2`)
   if (declared !== buf.length) throw new Error(`GLB 头声明 ${declared} 字节，实际 ${buf.length} 字节，文件可能没下完整`)
-  // 从 JSON chunk 里读 POSITION accessor 的 min/max，能算出模型高度就填进清单
+  // 从 JSON chunk 里把所有 POSITION accessor 的 min/max 并起来，能估出模型总高度
   const jsonLen = buf.readUInt32LE(12)
   const json = JSON.parse(buf.subarray(20, 20 + jsonLen).toString('utf8'))
-  const posAccessor = json.meshes?.[0]?.primitives?.[0]?.attributes?.POSITION
-  const acc = posAccessor !== undefined ? json.accessors?.[posAccessor] : null
-  if (acc?.min && acc?.max) height = Number((acc.max[1] - acc.min[1]).toFixed(3))
+  const min = [Infinity, Infinity, Infinity]
+  const max = [-Infinity, -Infinity, -Infinity]
+  for (const mesh of json.meshes ?? []) {
+    for (const prim of mesh.primitives ?? []) {
+      const acc = json.accessors?.[prim.attributes?.POSITION]
+      if (!acc?.min || !acc?.max) continue
+      for (let i = 0; i < 3; i++) {
+        min[i] = Math.min(min[i], acc.min[i])
+        max[i] = Math.max(max[i], acc.max[i])
+      }
+    }
+  }
+  // 各网格的局部包围盒并集，没算节点变换，所以是「约」——只是给人看个量级
+  if (Number.isFinite(min[1]) && Number.isFinite(max[1])) {
+    height = Number((max[1] - min[1]).toFixed(3))
+  }
 }
 
 const fileName = outName ?? (ext === '.gltf' ? 'character.gltf' : 'character.glb')
@@ -65,16 +78,14 @@ const manifest = {
   file: fileName,
   sha256: createHash('sha256').update(buf).digest('hex'),
   bytes: buf.length,
-  height,
   source: basename(src),
   addedAt: new Date().toISOString(),
-  note: '模型著作权归原作者所有，请遵守原发布页的使用条款；本仓库不收录模型文件。',
+  note: '模型著作权归原作者所有，请遵守原发布页的使用条款；本仓库不收录模型文件。舞台上的归一化与取景都在运行时按实际包围盒算，所以这里不记尺寸。',
 }
 // 唯一记录在 src/data/model.json（会入库），模型文件本身在 public/assets/model/（不入库）
 await writeFile(join(root, 'src/data/model.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8')
 
 const size = (await stat(dest)).size
 console.log(`✓ ${basename(src)} -> public/assets/model/${fileName} (${(size / 1024 / 1024).toFixed(2)} MB)`)
-console.log(`  高度 ${height ?? '未知'}（取模型自身单位），SHA-256 ${manifest.sha256.slice(0, 16)}…`)
-console.log('  已写入 src/data/model.json（构建期内联）：npm run dev 下刷新即可；')
-console.log('  dist 部署的话要重新 npm run build，否则不会带上模型。')
+console.log(`  SHA-256 ${manifest.sha256.slice(0, 16)}…（已写入 src/data/model.json）`)
+console.log('  模型记录是构建期内联的：npm run dev 下刷新即可；dist 部署的话要重新 npm run build。')
