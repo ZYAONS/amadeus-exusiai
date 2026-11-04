@@ -3,6 +3,10 @@ dist/
 .env
 .env.local
 
+# python 缓存
+__pycache__/
+*.pyc
+
 # 素材不入库：立绘/语音/头像的著作权不是本项目的，仓库只存地址与 SHA-256
 public/assets/
 _ref/

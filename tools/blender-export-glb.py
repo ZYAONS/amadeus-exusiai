@@ -272,6 +272,129 @@ def collapse_extra_armatures(meshes, usable):
     return done
 
 
+def bake_static_accessories(meshes, animated_armatures=("rig",)):
+    """
+    只有「会动的骨架」驱动的网格才导出 skin，其余网格的骨架形变直接烘进顶点。
+
+    为什么：导出 skin 时网格是按骨架的**静止姿势**绑定的。这份模型里配件骨架
+    （骨架 / 骨架.001 / RIG-骨架.002）的静止姿势和作者摆出来的姿势不一样，
+    一旦给它们导出 skin，光环和翅膀会回到静止位置——表现为头顶一团红色弧形。
+    它们本来也不做动画，烘成静态几何既省体积又不会错位。
+    """
+    done = []
+    animated = set(animated_armatures)
+    for obj in meshes:
+        arm_mods = [m for m in obj.modifiers if m.type == "ARMATURE" and m.object]
+        if not arm_mods:
+            continue
+        if {m.object.name for m in arm_mods} & animated:
+            continue  # 会动的骨架：留着导出 skin
+        bpy.context.view_layer.objects.active = obj
+        ok = True
+        for name in [m.name for m in arm_mods]:
+            try:
+                bpy.ops.object.modifier_apply(modifier=name)
+            except Exception as exc:
+                ok = False
+                done.append(f"{obj.name}: modifier_apply 失败（{exc}）→ 改用 convert")
+                break
+        if ok:
+            done.append(f"{obj.name}: 烘成静态（{', '.join(m.name for m in arm_mods)}）")
+            continue
+        # 有形状键/多用户数据时 modifier_apply 会失败，convert 能把修改器一起烘掉
+        try:
+            if obj.data.users > 1:
+                obj.data = obj.data.copy()
+            bpy.ops.object.convert(target="MESH")
+            left = [m.type for m in obj.modifiers]
+            done.append(f"{obj.name}: convert 成功，剩余修改器={left}")
+        except Exception as exc:
+            done.append(f"{obj.name}: convert 也失败 -> {exc}")
+    bpy.context.view_layer.update()
+    return done
+
+
+def weights_live_in(obj, armature_name):
+    """这个网格的顶点组是不是真的落在那套骨架的骨头上（决定它该不该被蒙皮）"""
+    arm = bpy.data.objects.get(armature_name)
+    if not arm or obj.type != "MESH":
+        return False
+    bones = {b.name for b in arm.data.bones}
+    return any(vg.name in bones for vg in obj.vertex_groups)
+
+
+def apply_modifier(obj, mod_name):
+    """
+    应用一个修改器；有形状键时退回 convert（convert 会把所有修改器一起烘掉）。
+
+    注意：convert 作用于**整个选中集**。不先把选择收敛到这个对象，
+    它会把别的网格（包括身体）的骨架修改器一起烘掉——那样导出时就没有蒙皮了。
+    """
+    bpy.ops.object.select_all(action="DESELECT")
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+    try:
+        bpy.ops.object.modifier_apply(modifier=mod_name)
+        return "applied"
+    except Exception:
+        try:
+            if obj.data.users > 1:
+                obj.data = obj.data.copy()
+            bpy.ops.object.convert(target="MESH")
+            return "converted"
+        except Exception as exc:
+            return f"failed({exc})"
+
+
+def prepare_meshes_for_skin(meshes, animated_armature="rig"):
+    """
+    分派：顶点组真正落在会动的骨架上的网格 → 保留骨架修改器，导出 skin；
+    其余网格（配件）→ 把骨架形变烘进顶点，导出静态几何。
+
+    为什么这么分：导出 skin 时网格是按骨架**静止姿势**绑定的。配件骨架的静止姿势
+    和作者摆的姿势不一样，一旦给它们绑 skin，光环/头发会飞到镜头前（实测：头发网格
+    离相机 2.39，其余 3.7）。而像 hair.001 这种挂着 rig 修饰器、顶点组却属于另一套
+    骨架的网格，绑到 rig 上会让权重全落空、直接塌成一团。
+    """
+    report = []
+    for obj in meshes:
+        arm_mods = [m for m in obj.modifiers if m.type == "ARMATURE" and m.object]
+        if not arm_mods:
+            continue
+        skinned = weights_live_in(obj, animated_armature) and any(
+            m.object.name == animated_armature for m in arm_mods
+        )
+        if skinned:
+            # 只烘掉别的骨架的贡献，留下会动的那套
+            for m in [m for m in arm_mods if m.object.name != animated_armature]:
+                what = apply_modifier(obj, m.name)
+                report.append(f"{obj.name}: 蒙皮(rig)，烘掉 {m.name} -> {what}")
+        else:
+            # 按修改器栈顺序全烘掉（只烘一个的话，第二个骨架修改器还在，导出时又会被绑上）
+            for m in list(arm_mods):
+                if not obj.modifiers.get(m.name):
+                    continue
+                what = apply_modifier(obj, m.name)
+                report.append(f"{obj.name}: 静态，烘 {m.name} -> {what}")
+                if what == "converted":
+                    break  # convert 已经把栈里剩下的都烘掉了
+    bpy.context.view_layer.update()
+    return report
+
+
+def apply_non_armature_modifiers(meshes):
+    """非骨架修改器（细分、镜像等）导出前要应用掉，否则 web 里看不到"""
+    done = []
+    for obj in meshes:
+        for m in [m for m in obj.modifiers if m.type != "ARMATURE"]:
+            if not obj.modifiers.get(m.name):
+                continue
+            what = apply_modifier(obj, m.name)
+            done.append(f"{obj.name}: {m.name}({m.type}) -> {what}")
+    bpy.context.view_layer.update()
+    return done
+
+
 def key_current_pose(armatures, frame=1):
     """
     把「当前看到的姿势」钉成关键帧。
@@ -387,22 +510,33 @@ def main():
         for line in tracks:
             print("   -", line)
     if with_skins:
-        collapsed = collapse_extra_armatures(picked, usable)
-        if collapsed:
-            print("[skin] 多骨架网格收敛：")
-            for line in collapsed:
-                print("   -", line)
-        keyed = key_current_pose(usable)
-        print("[pose] 当前姿势已钉成关键帧（否则配件会回到静止姿势）：")
+        report = prepare_meshes_for_skin(picked, "rig")
+        print(f"[skin] 蒙皮/静态分派（{len(report)} 条）：")
+        for line in report:
+            print("   -", line)
+        # 非骨架修改器交给 export_apply 处理：
+        # 自己手动应用会在带形态键的网格（比如脸）上失败并回退 convert，
+        # 那样连骨架修改器也会被烘掉、蒙皮直接丢失。
+        keyed = key_current_pose([a for a in usable if a.name == "rig"])
+        print("[pose] 身体骨架的当前姿势已钉成关键帧：")
         for line in keyed:
             print("   -", line)
+
+    # 前面为了应用修改器反复改过选择集，导出前必须恢复：use_selection=True 靠它
+    bpy.ops.object.select_all(action="DESELECT")
+    for obj in picked:
+        obj.select_set(True)
+    for arm_obj in usable:
+        if arm_obj.name in {o.name for o in bpy.context.view_layer.objects}:
+            arm_obj.select_set(True)
+    bpy.context.view_layer.objects.active = picked[0]
 
     # 3./4. 导出
     bpy.ops.export_scene.gltf(
         filepath=out,
         export_format="GLB",
         use_selection=True,
-        export_apply=True,
+        export_apply=True,  # 隔离实验确认过：它只应用非骨架修改器，蒙皮照样保留
         export_skins=with_skins,
         export_animations=with_skins,
         export_frame_range=animate,

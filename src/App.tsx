@@ -15,6 +15,7 @@ import { classifyEmotion, type Emotion } from './lib/emotion'
 import { offlineReply } from './lib/offlinePersona'
 import { IDLE_POOL, LINES, TOUCH_POOL, lineText, type VoiceLang, type VoiceLine } from './lib/operator'
 import { unlockedLines } from './lib/trust'
+import { startVoiceCall, type CallEvent, type CallHandle } from './lib/rtc'
 import modelRecord from './data/model.json'
 
 const MODEL = modelRecord as { file: string | null; demo?: boolean }
@@ -39,6 +40,9 @@ export default function App() {
   const [playingNo, setPlayingNo] = useState<number | undefined>()
   // 3D 舞台的记录来自 src/data/model.json（模型文件本身在 public/assets/model/，不入库）
   const [modelFailed, setModelFailed] = useState<string | null>(null)
+  const [callState, setCallState] = useState<'idle' | 'connecting' | 'live' | 'error'>('idle')
+  const [callError, setCallError] = useState<string | null>(null)
+  const callRef = useRef<CallHandle | null>(null)
 
   const busyRef = useRef(false)
   const sendRef = useRef<(t: string) => void>(() => {})
@@ -111,6 +115,50 @@ export default function App() {
     const line = pendingLine.current
     pendingLine.current = null
     if (line) void playLineRef.current(line)
+  }
+
+  // ---------- WebRTC 语音通话 ----------
+  function handleCallEvent(event: CallEvent) {
+    if (event.type === 'final') {
+      s.push({ role: 'user', text: event.text })
+      s.bumpTrust()
+    } else if (event.type === 'reply') {
+      const emotion = classifyEmotion(event.text)
+      emit({ text: event.text, emotion })
+    } else if (event.type === 'error') {
+      console.warn('[webrtc] 服务端报错：', event.message)
+      setCallError(event.message)
+    }
+  }
+
+  async function startCall() {
+    setCallError(null)
+    setCallState('connecting')
+    const audio = document.getElementById('voice-call') as HTMLAudioElement | null
+    if (!audio) {
+      setCallState('error')
+      return
+    }
+    try {
+      const handle = await startVoiceCall(s.name, handleCallEvent, audio)
+      callRef.current = handle
+      setCallState('live')
+    } catch (err) {
+      console.warn('[webrtc] 通话没起来：', err)
+      setCallState('error')
+      setCallError(String((err as Error)?.message ?? err))
+    }
+  }
+
+  function stopCall() {
+    callRef.current?.stop()
+    callRef.current = null
+    setCallState('idle')
+  }
+
+  function toggleCall() {
+    if (callState === 'live' || callState === 'connecting') stopCall()
+    else void startCall()
   }
 
   async function send(raw: string) {
@@ -320,6 +368,8 @@ export default function App() {
       <Toolbar
         voice={s.config.voice}
         active={sheet}
+        callState={callState}
+        onToggleCall={toggleCall}
         onToggleVoice={() => {
           s.setConfig({ voice: !s.config.voice })
           if (s.config.voice) {
@@ -329,11 +379,27 @@ export default function App() {
         }}
         onChange={setSheet}
         onSignOut={() => {
+          stopCall()
           stopOfficial()
           stopSpeaking()
           s.signOut()
         }}
       />
+
+      {callState !== 'idle' && (
+        <div
+          data-call={callState}
+          className="pointer-events-none fixed left-1/2 top-3 z-40 -translate-x-1/2 border border-[var(--po-line)] bg-[rgba(8,8,11,0.9)] px-3 py-1.5 font-hud text-[11px] tracking-[0.14em] text-[var(--po-muted)]"
+        >
+          {callState === 'connecting' && '语音链路建立中…'}
+          {callState === 'live' && <span className="text-[var(--po-amber)]">● WebRTC 通话中 · 说话就会被听见</span>}
+          {callState === 'error' && (
+            <span className="text-[var(--po-crimson)]">
+              语音服务连不上{callError ? `（${callError.slice(0, 40)}）` : ''} —— 先跑 npm run dev:webrtc
+            </span>
+          )}
+        </div>
+      )}
 
       {needGesture && (
         <button
@@ -415,6 +481,8 @@ export default function App() {
 
       {/* 播放器必须留在 DOM 上，自检和「重播」按钮都靠它 */}
       <audio id="official-voice" preload="none" className="hidden" />
+      {/* WebRTC 通话的远端音轨挂这里 */}
+      <audio id="voice-call" preload="auto" className="hidden" />
     </main>
   )
 }

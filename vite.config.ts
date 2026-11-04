@@ -10,6 +10,8 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/api': { target: 'http://127.0.0.1:3002', changeOrigin: true },
+      // WebRTC 语音服务的信令（aiortc，python service/webrtc/server.py）
+      '/rtc': { target: 'http://127.0.0.1:8001', changeOrigin: true },
     },
     // 编辑器/工具写入时的临时目录会被 watcher 抓到并 EBUSY（真踩过）；
     // public/assets 是静态素材，几十 MB 的模型文件一放进去就能把 watcher 顶死，一律不监视

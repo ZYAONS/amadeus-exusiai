@@ -12,7 +12,8 @@
     "setup": "node tools/build-voice-data.mjs && node tools/fetch-assets.mjs",
     "model": "node tools/fetch-model.mjs",
     "model:demo": "node tools/make-demo-model.mjs",
-    "check": "node tools/check.mjs"
+    "check": "node tools/check.mjs",
+    "dev:webrtc": "python service/webrtc/server.py"
   },
   "dependencies": {
     "lucide-react": "^0.469.0",

@@ -41,6 +41,8 @@ const child = spawn(
     '--no-default-browser-check',
     '--disable-gpu',
     '--enable-unsafe-swiftshader', // 无头下没有 GPU，WebGL 要靠 SwiftShader，缺这个 flag 会直接拿不到上下文
+    '--use-fake-device-for-media-stream', // WebRTC 断言要有麦克风；无头环境只能给它一个假设备
+    '--use-fake-ui-for-media-stream',
     '--window-size=1360,900',
     'about:blank',
   ],
@@ -87,6 +89,38 @@ const apiUp = await until(async () => {
   }
 }, 10000, 200)
 if (!apiUp) console.warn('! 本地服务没起来（3002），/api 相关断言会按实际结果报')
+
+// WebRTC 语音服务（python + aiortc）。强制 stub 的 ASR/TTS，保证结果可复现：
+// 转写固定一句、合成是提示音，但「音频真的双向流动」这件事是真的。
+// VAD 参数在这台「假麦克风」上调紧：Chrome 的假设备是一串短促提示音，
+// 用产品默认的 8 秒上限要等一分钟才断出第一句（自检只调harness，不改产品默认）。
+let webrtc = null
+try {
+  webrtc = spawn('python', [join(root, 'service/webrtc/server.py')], {
+    stdio: 'ignore',
+    cwd: join(root, 'service/webrtc'),
+    env: {
+      ...process.env,
+      AMADEUS_FORCE_STUB: '1',
+      WEBRTC_PORT: '8001',
+      VAD_RMS: '600',
+      VAD_SILENCE_MS: '200',
+      VAD_MIN_SPEECH_MS: '60',
+      VAD_MAX_SEGMENT_MS: '2000',
+    },
+  })
+} catch {
+  webrtc = null
+}
+const rtcUp = await until(async () => {
+  try {
+    const r = await fetch('http://127.0.0.1:8001/health')
+    return r.ok
+  } catch {
+    return false
+  }
+}, 20000, 300)
+if (!rtcUp) console.warn('! WebRTC 服务没起来（8001），通话那组断言会显式跳过')
 
 class CDP {
   constructor(ws) {
@@ -184,6 +218,8 @@ for (const vp of VIEWPORTS) {
 
   await cdp.evaluate(`window.__CHECK_LINES = ${JSON.stringify(voiceData.lines)}`)
   await cdp.evaluate(`window.__CHECK_MODEL = ${JSON.stringify(modelRecord)}`)
+  await cdp.evaluate(`window.__CHECK_VP = ${JSON.stringify(vp.mobile ? 'mobile' : 'desktop')}`)
+  await cdp.evaluate(`window.__CHECK_RTC = ${rtcUp ? 'true' : 'false'}`)
 
   const suite = `(async () => {
   const results = []
@@ -412,6 +448,21 @@ for (const vp of VIEWPORTS) {
     const tris = await until(() => Number((document.querySelector('[data-model]') || {}).dataset?.tris) > 0, 10000)
     ok('WebGL 真的光栅化了三角形', tris,
       'data-tris=' + ((document.querySelector('[data-model]') || {}).dataset?.tris ?? '未写回（WebGL 没跑起来）'))
+
+    // 骨架动画：不只看「有几段动画」，要看时钟在走、骨骼真的在动、网格真的被蒙皮
+    const host3dEl = document.querySelector('[data-model]')
+    const skinsN = Number(host3dEl && host3dEl.dataset.skins)
+    ok('网格真的被蒙皮（有 skin 绑定）', skinsN > 0, 'data-skins=' + (host3dEl && host3dEl.dataset.skins))
+    if (skinsN > 0) {
+      const t0 = Number(host3dEl.dataset.animT)
+      const y0 = host3dEl.dataset.boneY
+      await wait(1200)
+      const t1 = Number(host3dEl.dataset.animT)
+      const y1 = host3dEl.dataset.boneY
+      ok('动画时钟在走', t1 > t0, 'animT ' + t0 + ' -> ' + t1)
+      ok('骨骼世界坐标在变（动画真的在驱动骨架）', y0 !== undefined && y1 !== undefined && Math.abs(Number(y1) - Number(y0)) > 1e-4,
+        'boneY ' + y0 + ' -> ' + y1)
+    }
     const cvs = document.querySelector('[data-model] canvas')
     ok('画布尺寸非零', !!cvs && cvs.width > 0 && cvs.height > 0,
       cvs ? cvs.width + 'x' + cvs.height : '没有 canvas')
@@ -459,6 +510,94 @@ for (const vp of VIEWPORTS) {
     ok('3D 可以反复进入', again, again ? '第二次仍然 ready' : '第二次没起来')
     ok('来回切换没留下多余 canvas', hostCanvases === 1,
       '宿主内 canvas=' + hostCanvases + '，页面全部 canvas=' + allCanvases + '（其中 1 个是粒子背景）')
+  }
+
+  // ── WebRTC 语音通话：假麦克风 → 服务端 VAD/ASR/LLM/TTS → 回传音频 + 文本事件
+  if (window.__CHECK_VP !== 'mobile' && window.__CHECK_RTC) {
+    const statsOf = async () => {
+      try {
+        return await (await fetch('http://127.0.0.1:8001/stats')).json()
+      } catch (e) {
+        return null
+      }
+    }
+    const before = await statsOf()
+    ok('通话前服务端在（/rtc 反代通了）', !!before, before ? 'asr=' + before.asr + ' tts=' + before.tts : '拿不到 /stats')
+
+    const callBtn = byLabel('开始语音通话')
+    ok('工具栏有通话按钮', !!callBtn, callBtn ? 'aria-label 命中' : '没找到')
+    if (callBtn && before) {
+      // 先记下当前记录条数：待会儿只认「通话之后新增的」消息，
+      // 否则前面文本聊天断言留下的同名消息会让这条断言假通过（真踩过）
+      const countBefore = (() => {
+        try {
+          return JSON.parse(localStorage.getItem('amadeus.exusiai.v1')).messages.length
+        } catch (e) {
+          return 0
+        }
+      })()
+      callBtn.click()
+      const live = await until(() => {
+        const el = document.querySelector('[data-call]')
+        return el && el.dataset.call === 'live'
+      }, 30000)
+      ok('WebRTC 连接建立（data-call=live）', live,
+        '状态=' + ((document.querySelector('[data-call]') || {}).dataset?.call ?? 'none'))
+
+      // 服务端计数器：证明音频真的经 WebRTC 上去了、处理过、又下来了
+      let stats = before
+      const handled = await until(async () => {
+        stats = (await statsOf()) || stats
+        return stats.frames_in > 200 && stats.transcripts > 0 && stats.replies > 0 && stats.tts_bytes > 0
+      }, 60000, 700)
+      ok('服务端收到音频帧', stats && stats.frames_in > 200,
+        'frames_in=' + (stats && stats.frames_in) + ' max_rms=' + (stats && stats.max_rms))
+      ok('VAD 真的断出语音段', stats && stats.segments > 0,
+        'segments=' + (stats && stats.segments) + ' voiced_frames=' + (stats && stats.voiced_frames))
+      ok('ASR 出文本 / 人格服务出回复 / TTS 出音频', handled,
+        'transcripts=' + (stats && stats.transcripts) + ' replies=' + (stats && stats.replies) + ' tts_bytes=' + (stats && stats.tts_bytes))
+      ok('回传音轨有音频帧（down link）', stats && stats.frames_out > 20, 'frames_out=' + (stats && stats.frames_out))
+
+      // 浏览器这一侧：远端音轨真的在放，转写与回复真的进了对话记录
+      const audioPlaying = await until(() => {
+        const a = document.getElementById('voice-call')
+        return a && a.srcObject && a.currentTime > 0 && !a.paused
+      }, 15000)
+      const audioEl = document.getElementById('voice-call')
+      ok('远端音轨在浏览器里播放', audioPlaying,
+        audioEl ? 'srcObject=' + !!audioEl.srcObject + ' t=' + audioEl.currentTime.toFixed(2) + ' paused=' + audioEl.paused : '没有 audio 元素')
+
+      const transcriptShown = await until(() => {
+        try {
+          const saved = JSON.parse(localStorage.getItem('amadeus.exusiai.v1'))
+          const fresh = saved.messages.slice(countBefore)
+          return fresh.some((m) => m.role === 'user') && fresh.some((m) => m.role === 'operator')
+        } catch (e) {
+          return false
+        }
+      }, 30000)
+      const freshMsgs = (() => {
+        try {
+          return JSON.parse(localStorage.getItem('amadeus.exusiai.v1')).messages.slice(countBefore)
+        } catch (e) {
+          return []
+        }
+      })()
+      ok('通话里产生了新的转写与回复（只看通话之后新增的）', transcriptShown,
+        '新增 ' + freshMsgs.length + ' 条：' +
+          freshMsgs.map((m) => m.role + '=' + m.text.slice(0, 10)).join(' / '))
+
+      // 挂断
+      const hangup = byLabel('挂断语音通话')
+      ok('通话中按钮变成挂断', !!hangup, hangup ? 'aria-label=挂断语音通话' : '没变')
+      if (hangup) {
+        hangup.click()
+        const hung = await until(() => !document.querySelector('[data-call]'), 8000)
+        ok('挂断后状态清除', hung, hung ? 'data-call 已移除' : '还挂在页面上')
+      }
+    }
+  } else if (window.__CHECK_VP !== 'mobile') {
+    ok('WebRTC 通话跳过：python 服务没起来', true, '需要 aiortc：pip install -r service/webrtc/requirements.txt')
   }
 
   // ── 开关类：语音静音要真的落盘
@@ -527,6 +666,7 @@ console.log(`\n共 ${allResults.length} 项检查，失败 ${failed.length} 项`
 ws.close()
 child.kill()
 api.kill()
+webrtc?.kill()
 await sleep(300)
 await rm(profile, { recursive: true, force: true }).catch(() => {})
 process.exit(failed.length ? 1 : 0)

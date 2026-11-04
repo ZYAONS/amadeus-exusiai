@@ -106,8 +106,32 @@ export default function ModelStage({ url, emotion, speaking, onTap, onFail }: Pr
         // 只播 animations[0] 会丢配件的那段（症状是光环飘走、头发错位）
         if (mixer) for (const clip of anims) mixer.clipAction(clip).play()
 
+        // 自检用：蒙皮网格数量、动画时钟、某根骨的世界高度——证明动画真在驱动骨架
+        type BoneLike = { getWorldPosition: (v: unknown) => void }
+        let skinnedMesh: { skeleton?: { bones: unknown[] } } | null = null
+        let skins = 0
+        model.traverse((obj) => {
+          const m = obj as unknown as { isSkinnedMesh?: boolean; skeleton?: { bones: unknown[] } }
+          if (m.isSkinnedMesh) {
+            skins += 1
+            if (!skinnedMesh) skinnedMesh = m
+          }
+        })
+        host.dataset.skins = String(skins)
+        const boneVec = new THREE.Vector3()
+        const sampleBone = () => {
+          const bones = skinnedMesh?.skeleton?.bones as BoneLike[] | undefined
+          if (!bones?.length) return
+          bones[Math.min(6, bones.length - 1)].getWorldPosition(boneVec)
+          host.dataset.boneY = boneVec.y.toFixed(5)
+        }
+
         setMeta({ height: Number(rawHeight.toFixed(2)), anims: anims.length })
         setStatus('ready')
+        // 开发环境下把场景挂到 window，方便排查「哪个网格位置不对」（生产构建里没有）
+        if (import.meta.env.DEV) {
+          ;(window as unknown as Record<string, unknown>).__AMADEUS_MODEL = { scene, model, camera, renderer, THREE }
+        }
 
         // 拖动转视角；移动很小就算「戳一下」
         let dragging = false
@@ -148,6 +172,11 @@ export default function ModelStage({ url, emotion, speaking, onTap, onFail }: Pr
           renderer.render(scene, camera)
           // 真的光栅化出来的三角形数量：WebGL 没跑起来这里是 0，自检靠这个分辨
           if (++frames === 4) host.dataset.tris = String(renderer.info.render.triangles)
+          // 无头环境里 rAF 会被节流到很低，所以每帧都写（每帧一次 getWorldPosition 可以忽略）
+          if (mixer) {
+            host.dataset.animT = mixer.time.toFixed(3)
+            sampleBone()
+          }
           raf = requestAnimationFrame(loop)
         }
         raf = requestAnimationFrame(loop)

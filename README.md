@@ -76,6 +76,36 @@ three.js 是动态 import 的，没有模型文件时三件事一起省掉：那
 
 模型出处：[模之屋 · 新约能天使 v2 版分享](https://www.aplaybox.com/details/model/62ZSh6wZ3Alg)（作者用 Blender 做的，身体 arp、面部 faceit、rigify 绑骨）。要按原作者的条款使用，别拿去商用或二次配布。
 
+## 实时语音通话（WebRTC + Whisper + SiliconFlow）
+
+工具栏那个电话按钮是一条完整的实时语音链路，跟参考项目同一个架构，只是把服务端换成了 aiortc：
+
+```
+浏览器麦克风 ──Opus/WebRTC──▶ service/webrtc（python + aiortc）
+                                   │  VAD 断句（能量阈值，20ms 一帧）
+                                   │  Whisper /audio/transcriptions   ← 耳朵
+                                   │  Node 人格服务 /api/chat（流式）  ← 脑子
+                                   │  SiliconFlow /audio/speech        ← 嘴
+浏览器播放 ◀──PCM 48k/WebRTC──────┘   文本事件走 data channel
+```
+
+```bash
+python -m pip install -r service/webrtc/requirements.txt   # aiortc + av（Windows 上 av 要用预编译 wheel）
+npm run dev        # 前端 1002
+npm run dev:api    # 人格服务 3002
+npm run dev:webrtc # 语音服务 8001
+```
+
+三件事值得说明：
+
+**没有 key 也能跑通全链路。** 缺 `WHISPER_API_KEY` 时转写固定返回一句话，缺 `SILICONFLOW_API_KEY` 时合成本地生成一段提示音——`/health` 会如实标成 `asr: stub / tts: stub`，不会假装是真识别、真配音。这样「音频双向流动 + 转写 + 回复 + 回传播放」全都能被自检断言，等你把 key 填进 `.env` 就换成真的。
+
+**没有大模型也不编台词。** 人格服务返回 501 或连不上时，服务端直接从 `src/data/voice-lines.json` 里按关键词挑一句官方原话，和网页版「本地人格模式」同一条规矩。
+
+**VAD 是按真人说话调的。** 默认 900 RMS 起判、静音 700ms 断句、单段最长 8 秒。自检会临时把参数收紧（Chrome 的假麦克风是一串 100ms 的短提示音，用默认值要等一分钟才断出第一句）——调的是 harness，不是产品默认。
+
+自检里这条链路的断言全是真数字，不是「元素存在」：服务端 `frames_in`（收到多少 20ms 帧）、`max_rms`（真的有声音）、`segments`/`transcripts`/`replies`/`tts_bytes`（真的走完了 VAD→ASR→LLM→TTS）、`frames_out`（下行有音频），加上浏览器侧 `<audio>` 的 `currentTime` 在走、以及**通话之后新增**的转写与回复才计数（早先版本因为文本恰好相同，被前面文本聊天的记录喂成了假通过）。
+
 ## 对话之外
 
 信赖度是唯一的进度尺，每说一句涨 3 点，上限 200。台词库按游戏里的解锁条件上锁：信赖 40/100/200 与精英阶段 1/2 都换算到这条尺子上，锁着的台词点不动。信赖到 120（精英阶段 2）时台上的立绘换成精二插画。
@@ -85,15 +115,16 @@ three.js 是动态 import 的，没有模型文件时三件事一起省掉：那
 ## 目录
 
 ```
-src/App.tsx            对话流程：流入、打字机、播报、闲置主动说话
+src/App.tsx            对话流程：流入、打字机、播报、闲置主动说话、语音通话接入
 src/components/        登录遮罩、2D 立绘舞台、3D 舞台、HUD、对话框、工具栏、三个抽屉面板
-src/lib/               operator(档案与立绘地址) / trust(解锁) / emotion / audio / offlinePersona / api / store
+src/lib/               operator(档案与立绘地址) / trust(解锁) / emotion / audio / offlinePersona / api / rtc / store
 src/data/voice-lines.json   38 条官方台词（tools/build-voice-data.mjs 生成）
 src/data/model.json    3D 模型记录（file 为 null 表示用立绘）
-service/server.mjs     OpenAI 兼容端点 → SSE，兼静态托管 dist
+service/server.mjs     OpenAI 兼容端点 → SSE，兼静态托管 dist 与 /rtc 反代
+service/webrtc/        aiortc 语音服务：server.py（SDP/音轨）+ pipeline.py（VAD/编排）+ asr.py + tts.py
 tools/fetch-assets.mjs 取立绘与配音并核对 SHA-256
 tools/fetch-model.mjs  接本地 3D 模型（校验 + 记录）
-tools/blender-export-glb.py  .blend → GLB：挑对象、压平 toon 材质、降采样贴图
+tools/blender-export-glb.py  .blend → GLB：挑对象、压平 toon 材质、降采样贴图、摆站姿、呼吸动画
 tools/make-demo-model.mjs  自造占位 GLB，用来验证 3D 链路
 tools/check.mjs        无头浏览器自检
 tools/prts/            干员页与语音记录的原始 wikitext（数据从它解析出来的）
@@ -107,7 +138,7 @@ npm run check                                        # 测开发服务器
 npm run check -- http://127.0.0.1:3002/              # 测构建产物
 ```
 
-无头 Edge + CDP 真跑一遍，桌面 1360×900 与窄屏 390×780 各一遍，外加禁用脚本的一遍。有模型文件时 103 项；没有模型时 3D 那组会明确标成 PASS 并写明「跳过」的原因，总数随之减少（移动端自动播放被拦时另会多出两条分支断言，数目不固定）。它自己会起一个强制离线的 `service/`，所以 `.env` 里有真 key 也不影响结果。
+无头 Edge + CDP 真跑一遍，桌面 1360×900 与窄屏 390×780 各一遍，外加禁用脚本的一遍。有模型文件、且 python 语音服务能起来时 120 项；缺其中任何一块，对应那组会明确标成 PASS 并写明「跳过」的原因，总数随之减少。它自己会起一个强制离线的 `service/` 和一个强制 stub 的语音服务，所以 `.env` 里有真 key 也不影响结果。
 
 断言里比较关键的是这几条：立绘真的解码出像素（`naturalWidth > 0`），官方语音真的播过（`audio.played` 走到了非零秒），界面显示的台词与 `voice-lines.json` 逐字一致（中配日配各验一遍，并验音频文件真的换到了 `/voice/jp/`），锁定台词条数与信赖度算出来的期望值一致，GLB 真被解析（`data-height` 是从几何算的 1.86）且 WebGL 真光栅化了 74.7 万个三角形，3D→2D→3D 来回切不留多余 canvas，两个视口都没有横向溢出，控制台没有未捕获异常。
 
@@ -123,7 +154,9 @@ npm run check -- http://127.0.0.1:3002/              # 测构建产物
 
 2D 舞台是静态立绘加呼吸和光影，没有 Live2D 或 Spine 骨架；游戏里也没有平面骨骼可以白拿。
 
-3D 舞台只认 glTF（`.glb`，VRM 也行）。台上是**静态站姿**：手臂已经从 A-pose 放下，但没有骨骼动画、没有表情 morph、不按口型开合——`--animate` 那条路还没解决配件骨架的静止姿势问题。运行时只有整体的呼吸起伏、微摆与轮廓光变化。
+3D 舞台只认 glTF（`.glb`，VRM 也行）。台上是**带骨架动画的站姿**：手臂从 A-pose 放下、3 秒呼吸循环（脊柱/颈/头微动），但**没有表情 morph、不按口型开合**——那需要模型自带表情通道，这份 `.blend` 里没有可用的形状键。
+
+实时通话那边：Whisper 与 SiliconFlow 没配 key 时是 stub（固定转写 + 提示音）；打断（barge-in）没做，她说话时你说的话会进 VAD 但不会打断她的播放。
 
 18.54 MB 的 GLB，首屏要等一两秒（本机测 2.2 秒到 ready），低端机或冷加载会更久。想更瘦可以 `--max-tex 256`，或给导出加 Draco 压缩（要配 DRACOLoader，没做）。
 

@@ -1,6 +1,7 @@
 // AMADEUS // TERRA 本地服务：把任意 OpenAI 兼容端点包成流式接口，并把人格提示词留在服务端。
 // 没配 key 就返回 501，前端自动回到「本地人格模式」——不装死、不假装自己是模型。
 import { createServer } from 'node:http'
+import { request as httpRequest } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { extname, join, resolve } from 'node:path'
@@ -145,6 +146,37 @@ const MIME = {
 }
 const DIST = resolve(import.meta.dirname, '../dist')
 
+/**
+ * 把 /rtc/* 转发给 WebRTC 语音服务（python service/webrtc/server.py）。
+ * 开发时走 vite 的 proxy，构建产物由本服务托管，所以这里也要能转。
+ */
+function proxyRtc(req, res) {
+  const body = []
+  req.on('data', (c) => body.push(c))
+  req.on('end', () => {
+    const payload = Buffer.concat(body)
+    const upstream = httpRequest(
+      {
+        hostname: '127.0.0.1',
+        port: Number(process.env.WEBRTC_PORT ?? 8001),
+        path: req.url,
+        method: req.method,
+        headers: { ...req.headers, host: '127.0.0.1:8001', 'content-length': payload.length },
+        timeout: 30000,
+      },
+      (up) => {
+        res.writeHead(up.statusCode ?? 502, {
+          'content-type': up.headers['content-type'] ?? 'application/json',
+          'access-control-allow-origin': '*',
+        })
+        up.pipe(res)
+      },
+    )
+    upstream.on('error', (err) => json(res, 502, { error: 'webrtc 服务没起来', detail: String(err.message) }))
+    upstream.end(payload)
+  })
+}
+
 async function serveStatic(req, res) {
   if (!existsSync(DIST)) return json(res, 404, { error: 'dist 不存在，先 npm run build' })
   const url = decodeURIComponent((req.url ?? '/').split('?')[0])
@@ -175,6 +207,10 @@ createServer((req, res) => {
   }
   if (req.url?.startsWith('/api/chat') && req.method === 'POST') {
     handleChat(req, res).catch((e) => json(res, 500, { error: String(e) }))
+    return
+  }
+  if (req.url?.startsWith('/rtc')) {
+    proxyRtc(req, res)
     return
   }
   serveStatic(req, res)
