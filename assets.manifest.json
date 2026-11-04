@@ -394,5 +394,13 @@
     }
   },
   "note": "素材著作权归上海鹰角网络科技有限公司所有；本清单只记录来源地址与校验值，文件本身不入库。",
-  "fetchedAt": "2026-11-03T19:48:17.394Z"
+  "fetchedAt": "2026-11-03T19:48:17.394Z",
+  "motion": {
+    "Soldier.glb": {
+      "url": "https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/models/gltf/Soldier.glb",
+      "sha256": "dfb230fc1f942f259dd00281a1186953ad602fc5d69067ce63e24b2aa439736b",
+      "bytes": 2160468,
+      "note": "three.js 示例资源；骨架是 Mixamo 命名（含手指骨），动作有 Idle/Run/Walk/TPose。只当动作源用，不随仓库分发。"
+    }
+  }
 }

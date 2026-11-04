@@ -30,13 +30,20 @@ def parse_args():
         face_tex = int(rest[rest.index("--face-tex") + 1])
     animate = "--animate" in rest or "--alive" in rest
     alive = "--alive" in rest
+    mocap = None
+    if "--mocap" in rest:
+        mocap = rest[rest.index("--mocap") + 1]
+    mocap_action = "Idle"
+    if "--mocap-action" in rest:
+        mocap_action = rest[rest.index("--mocap-action") + 1]
     # 默认把手放下来（台上要的是站姿，不是 A-pose）；要原始姿势加 --no-pose
     pose = not ("--no-pose" in rest)
     inward, down = 0.24, 0.24
     if "--arm-offset" in rest:
         i = rest.index("--arm-offset")
         inward, down = (float(v) for v in rest[i + 1].split(","))
-    return out, max_tex, face_tex, ("--skins" in rest or animate), animate, alive, pose, inward, down
+    return (out, max_tex, face_tex, ("--skins" in rest or animate), animate, alive, pose,
+            inward, down, mocap, mocap_action)
 
 
 def collect_tex_images(tree, seen=None):
@@ -618,8 +625,164 @@ def prepare_for_morph_export(meshes):
     return report
 
 
+# ───────────────────────── 开源动作重定向 ─────────────────────────
+# Mixamo → Auto-Rig Pro 控制骨。腿部不映射：源动作是站姿，腿保持 ARP 自己的 IK 站立，
+# 映射错了腿会扭断，收益却几乎为零。手指也不映射——这份模型的 rig 里没有手指骨。
+MOCAP_MAP = [
+    # 只重定向手臂链。脊柱/颈/头的静止朝向和 Mixamo 差得太多，简单世界旋转校正会把
+    # 上身拧成驼背（实测），而躯干本来就有 ARP 的站姿可用，收益不值这个风险。
+    ("mixamorig:LeftShoulder", "c_shoulder.l", False),
+    ("mixamorig:LeftArm", "c_arm_fk.l", False),
+    ("mixamorig:LeftForeArm", "c_forearm_fk.l", False),
+    ("mixamorig:LeftHand", "c_hand_fk.l", False),
+    ("mixamorig:RightShoulder", "c_shoulder.r", False),
+    ("mixamorig:RightArm", "c_arm_fk.r", False),
+    ("mixamorig:RightForeArm", "c_forearm_fk.r", False),
+    ("mixamorig:RightHand", "c_hand_fk.r", False),
+]
+
+
+def switch_limbs_to_fk(rig):
+    """ARP 的 IK/FK 开关就是形变骨上的 rotIK/rotFK 约束权重"""
+    flipped = 0
+    for pb in rig.pose.bones:
+        for c in pb.constraints:
+            n = c.name.lower()
+            if "ik" in n:
+                c.influence = 0.0
+                flipped += 1
+            elif "fk" in n:
+                c.influence = 1.0
+                flipped += 1
+    return flipped
+
+
+def _rest_rot(ob, bone_name):
+    return (ob.matrix_world @ ob.data.bones[bone_name].matrix_local).to_quaternion()
+
+
+def retarget_mocap(rig, mocap_path, action_name="Idle", fps=24, frames=48):
+    """
+    把开源动作（Mixamo 骨架的 GLB）重定向到 ARP 控制骨。
+
+    两侧静止姿势不同（T-pose vs A-pose、骨朝向也不同），不能直接拷旋转：
+    对每对骨头先算静止差值 corr = R_target_rest * R_source_rest^-1，每帧 target_world = corr * source_world。
+    """
+    bpy.ops.object.select_all(action="DESELECT")
+    bpy.ops.import_scene.gltf(filepath=mocap_path)
+    imported = list(bpy.context.selected_objects)
+    src = next((o for o in imported if o.type == "ARMATURE"), None)
+    if not src:
+        raise SystemExit("动作源里没有骨架")
+    # 源自带的网格会挡在镜头前，必须删掉（只借它的骨架采样）
+    for o in imported:
+        if o.type == "MESH":
+            bpy.data.objects.remove(o, do_unlink=True)
+
+    act = next((a for a in bpy.data.actions if a.name.startswith(action_name)), None)
+    if not act:
+        raise SystemExit(f"动作源里没有 {action_name!r} 动作")
+    src.animation_data.action = act
+    fr = act.frame_range
+    step = (fr[1] - fr[0]) / frames
+
+    switch_limbs_to_fk(rig)
+
+    pairs = []
+    for s_name, t_name, is_root in MOCAP_MAP:
+        if s_name not in src.pose.bones or t_name not in rig.pose.bones:
+            print(f"  ! 跳过 {s_name} -> {t_name}（骨架里没有）")
+            continue
+        pairs.append((s_name, t_name, is_root, _rest_rot(rig, t_name) @ _rest_rot(src, s_name).inverted()))
+
+    scene = bpy.context.scene
+    scene.render.fps = fps
+    if not rig.animation_data:
+        rig.animation_data_create()
+    new_act = bpy.data.actions.new("idle")
+    new_act.use_fake_user = True
+    rig.animation_data.action = new_act
+    scene.frame_start, scene.frame_end = 1, frames
+
+    rest_src_pos = (src.matrix_world @ src.pose.bones["mixamorig:Hips"].matrix).translation.copy()  # 未映射根骨时不用
+    rest_tgt_pos = (rig.matrix_world @ rig.pose.bones["c_root_master.x"].matrix).translation.copy()
+    ratio = rig.dimensions.z / (src.dimensions.z or 1.0) if src.dimensions.z else 1.0
+    ratio = max(0.5, min(2.0, ratio))
+
+    # 基准帧：所有骨头先钉一遍，切 clip 时不会跳
+    for pb in rig.pose.bones:
+        pb.keyframe_insert("location", frame=1)
+        pb.keyframe_insert("rotation_quaternion" if pb.rotation_mode == "QUATERNION" else "rotation_euler", frame=1)
+        pb.keyframe_insert("scale", frame=1)
+
+    for f in range(1, frames + 1):
+        scene.frame_set(int(round(fr[0] + (f - 1) * step)))
+        bpy.context.view_layer.update()
+        for s_name, t_name, is_root, corr in pairs:
+            src_m = src.matrix_world @ src.pose.bones[s_name].matrix
+            rot = corr.to_matrix().to_4x4() @ src_m.to_3x3().to_4x4()
+            tgt_pb = rig.pose.bones[t_name]
+            if is_root:
+                pos = rest_tgt_pos + (src_m.translation - rest_src_pos) * ratio
+                tgt_pb.matrix = Matrix.Translation(pos) @ rot
+            else:
+                cur = tgt_pb.matrix.translation.copy()
+                tgt_pb.matrix = Matrix.Translation(cur) @ rot
+            bpy.context.view_layer.update()
+            tgt_pb.keyframe_insert("location", frame=f)
+            tgt_pb.keyframe_insert("rotation_quaternion" if tgt_pb.rotation_mode == "QUATERNION" else "rotation_euler", frame=f)
+
+    rig.animation_data.action = None
+    track = rig.animation_data.nla_tracks.new()
+    track.name = "idle"
+    track.strips.new("idle", 1, new_act).name = "idle"
+    track.mute = True
+    print(f"[mocap] {mocap_path} 的 {act.name!r} → 生成 'idle'（{len(pairs)} 对骨头 / {frames} 帧 @ {fps}fps）")
+    return new_act
+
+
+# 配件的静止姿势和作者摆的姿势不一样，所以之前是烘成静态几何的；
+# 但头一动它们就留在原地（表现为光头 + 头顶飘着发饰）。
+# 这里把它们刚性绑到身体骨架的对应骨上：头发/光环跟头，翅膀跟胸。
+ACCESSORY_FOLLOW = [
+    (r"阿能头发|^hair|头发", "head.x"),
+    (r"环体|光环", "head.x"),
+    (r"chibang", "c_spine_03.x"),
+]
+
+
+def bind_accessories_to_body(meshes, rig):
+    """
+    让配件跟着身体骨架动。
+
+    不能用「加顶点组 + 骨架修改器」——那份网格是后烘成静态的，补上的蒙皮会因为
+    绑定矩阵对不上而被压成一个点（实测头发 size 变成 0.00，人就光头了）。
+    改用骨骼父子：把对象挂到对应骨上，刚性跟随，不参与蒙皮数学。
+    """
+    report = []
+    for obj in meshes:
+        if obj.type != "MESH":
+            continue
+        for pattern, bone in ACCESSORY_FOLLOW:
+            if not re.search(pattern, obj.name, re.I):
+                continue
+            if bone not in rig.data.bones:
+                report.append(f"{obj.name}: 骨架里没有 {bone}，跳过")
+                break
+            world = obj.matrix_world.copy()
+            obj.parent = rig
+            obj.parent_type = "BONE"
+            obj.parent_bone = bone
+            obj.matrix_world = world
+            report.append(f"{obj.name} → 骨骼父级 {bone}（刚性跟随）")
+            break
+    bpy.context.view_layer.update()
+    return report
+
+
 def main():
-    out, max_tex, face_tex, with_skins, animate, alive, do_pose, inward, down = parse_args()
+    (out, max_tex, face_tex, with_skins, animate, alive, do_pose,
+     inward, down, mocap, mocap_action) = parse_args()
     if not out:
         raise SystemExit("缺少输出路径：blender -b 文件.blend --python tools/blender-export-glb.py -- 输出.glb")
     out = os.path.abspath(out)
@@ -712,10 +875,13 @@ def main():
                 print(f"[alive] 修改器预处理（{len(prepared)} 条）：")
                 for line in prepared:
                     print("   -", line)
-            clips = author_alive_clips(bpy.data.objects["rig"])
-            print("[alive] 编好的动作：")
-            for line in clips:
-                print("   -", line)
+            if mocap:
+                retarget_mocap(bpy.data.objects["rig"], mocap, mocap_action)
+            else:
+                clips = author_alive_clips(bpy.data.objects["rig"])
+                print("[alive] 编好的动作（没有给 --mocap，用的是内置手编循环）：")
+                for line in clips:
+                    print("   -", line)
         else:
             tracks = add_breathing_loop()
             print("[anim] 呼吸循环关键帧：")
@@ -729,6 +895,12 @@ def main():
         # 非骨架修改器交给 export_apply 处理：
         # 自己手动应用会在带形态键的网格（比如脸）上失败并回退 convert，
         # 那样连骨架修改器也会被烘掉、蒙皮直接丢失。
+        if alive:
+            bound = bind_accessories_to_body(picked, bpy.data.objects["rig"])
+            if bound:
+                print(f"[skin] 配件刚性跟随身体骨架（{len(bound)} 个）：")
+                for line in bound:
+                    print("   -", line)
         keyed = key_current_pose([a for a in usable if a.name == "rig"]) if not alive else []
         if keyed:
             print("[pose] 身体骨架的当前姿势已钉成关键帧：")

@@ -491,7 +491,8 @@ for (const vp of VIEWPORTS) {
     // ── 活人感：两段动作 + 形态键（眨眼/口型/表情）+ 头部跟随
     const aliveEl = () => document.querySelector('[data-model]')
     const clips = (aliveEl()?.dataset.clips || '').split(',').filter(Boolean)
-    ok('导出了 idle / talk 两段动作', clips.includes('idle') && clips.includes('talk'), 'clips=' + clips.join(','))
+    // 动作现在来自开源 mocap（只重定向手臂链），不再是手编的 idle/talk 两段
+    ok('带进了开源动作片段（idle）', clips.includes('idle'), 'clips=' + clips.join(','))
     ok('形态键（眨眼/表情）已导出', Number(aliveEl()?.dataset.morphs) >= 20, 'morphs=' + aliveEl()?.dataset.morphs)
     ok('头部跟随接上了骨骼', aliveEl()?.dataset.headFollow === '1', 'headFollow=' + aliveEl()?.dataset.headFollow)
 

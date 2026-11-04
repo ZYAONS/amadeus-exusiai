@@ -52,9 +52,15 @@ export default function ModelStage({ url, emotion, speaking, onTap, onFail }: Pr
         if (disposed) return
 
         const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2.5))
         renderer.setSize(host.clientWidth || 1, host.clientHeight || 1)
         renderer.outputColorSpace = THREE.SRGBColorSpace
+        // 中性色调映射：高光滚降但不像 ACES 那样把红色压灰（她的头发最怕这个）
+        const ToneMap = (THREE as unknown as { NeutralToneMapping?: number }).NeutralToneMapping
+        if (ToneMap !== undefined) {
+          renderer.toneMapping = ToneMap as unknown as typeof renderer.toneMapping
+          renderer.toneMappingExposure = 1.05
+        }
         renderer.domElement.setAttribute('aria-label', '3D 人物模型')
         host.appendChild(renderer.domElement)
 
@@ -72,6 +78,12 @@ export default function ModelStage({ url, emotion, speaking, onTap, onFail }: Pr
         const rim = new THREE.DirectionalLight(0xffffff, 0.45)
         rim.position.set(-1.2, 1.8, -2.6)
         scene.add(rim)
+        // 面部补光：从正前方偏上打一小盏，专门把脸从阴影里提出来
+        const faceLight = new THREE.DirectionalLight(0xfff6ec, 0.55)
+        faceLight.position.set(0.15, 2.0, 3.0)
+        faceLight.target.position.set(0, 1.45, 0)
+        scene.add(faceLight)
+        scene.add(faceLight.target)
 
         const pivot = new THREE.Group()
         scene.add(pivot)
@@ -156,6 +168,20 @@ export default function ModelStage({ url, emotion, speaking, onTap, onFail }: Pr
           host.dataset.boneY = boneVec.y.toFixed(5)
         }
 
+        // 各向异性过滤：俯视/斜视时贴图不糊（脸和衣服的细节主要靠它）
+        const maxAniso = renderer.capabilities.getMaxAnisotropy()
+        model.traverse((obj) => {
+          const mesh = obj as unknown as { isMesh?: boolean; material?: Record<string, unknown> }
+          const mat = mesh.material
+          if (!mesh.isMesh || !mat) return
+          for (const key of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap']) {
+            const tex = mat[key] as { anisotropy?: number; needsUpdate?: boolean } | undefined
+            if (tex) {
+              tex.anisotropy = maxAniso
+              tex.needsUpdate = true
+            }
+          }
+        })
         setMeta({ height: Number(rawHeight.toFixed(2)), anims: anims.length })
         setStatus('ready')
         // 开发环境下把场景挂到 window，方便排查「哪个网格位置不对」（生产构建里没有）

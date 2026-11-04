@@ -1,8 +1,8 @@
 {
   "file": "character.glb",
-  "sha256": "4b5c87fd2b436bf9ca3445a17fa8fa361bd399d8f93aec22a13257aabcc76845",
-  "bytes": 24429304,
-  "source": "alive4.glb",
-  "addedAt": "2026-11-04T08:48:22.094Z",
+  "sha256": "6156dc34710527ac3c1e9fd49c4913e95ed3542660735a2beff3a7c3ad27d64d",
+  "bytes": 23951180,
+  "source": "mocap4.glb",
+  "addedAt": "2026-11-04T17:10:07.772Z",
   "note": "模型著作权归原作者所有，请遵守原发布页的使用条款；本仓库不收录模型文件。舞台上的归一化与取景都在运行时按实际包围盒算，所以这里不记尺寸。"
 }

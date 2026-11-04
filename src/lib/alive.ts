@@ -125,13 +125,15 @@ export function createAliveRig(THREE: ThreeAny, model: ThreeAny, mixer: ThreeAny
   function update(dt: number, state: AliveState) {
     time += dt
 
-    // idle ↔ talk 交叉淡入
+    // 动作只有一条（开源 mocap 的 idle）时，说话靠口型与语速表达；有 talk 才交叉淡入
     if (idle && talk) {
       const wantTalk = state.speaking ? 1 : 0
       const cur = talk.getEffectiveWeight()
       const next = cur + Math.sign(wantTalk - cur) * Math.min(Math.abs(wantTalk - cur), dt * 2.2)
       talk.setEffectiveWeight(next)
       idle.setEffectiveWeight(1 - next)
+    } else if (idle) {
+      idle.setEffectiveTimeScale(state.speaking ? 1.15 : 1)
     }
 
     // 每帧重置「主动驱动」的形态键目标，再由各模块设置
