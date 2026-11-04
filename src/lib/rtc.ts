@@ -62,6 +62,11 @@ export async function startVoiceCall(
       }
     }
 
+    // 状态要跟真实连接状态走：媒体可能在 startVoiceCall 还没返回时就已流动
+    pc.addEventListener('connectionstatechange', () => {
+      onEvent({ type: 'state', state: 'pc:' + pc.connectionState })
+    })
+
     pc.ontrack = (ev) => {
       remoteAudio.srcObject = ev.streams[0]
       void remoteAudio.play().catch(() => {

@@ -4,6 +4,7 @@
 // 依赖：Node ≥ 22（内置 fetch / WebSocket）。缺东西就明说，不偷偷放宽断言。
 import { spawn } from 'node:child_process'
 import { mkdtemp, rm, readFile } from 'node:fs/promises'
+import { appendFileSync, mkdirSync } from 'node:fs'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -30,6 +31,71 @@ const modelRecord = JSON.parse(await readFile(join(root, 'src/data/model.json'),
 
 const profile = await mkdtemp(join(tmpdir(), 'amadeus-check-'))
 
+// 语音素材：用 edge-tts 合成一句中文，再让 Chrome 把这句当成麦克风输入。
+// 这样 WebRTC 链路上跑的是真语音，本地 Whisper 的转写可以拿去和原文比对。
+const VENV_PY = [
+  join(root, 'service/webrtc/.venv/Scripts/python.exe'),
+  join(root, 'service/webrtc/.venv/bin/python'),
+].find((p) => existsSync(p))
+const voicePython = VENV_PY ?? 'python'
+const FIXTURE_WAV = join(root, '_ref/fixture-utterance.wav')
+const FIXTURE_TXT = join(root, '_ref/fixture-utterance.txt')
+let fixtureReady = existsSync(FIXTURE_WAV) && existsSync(FIXTURE_TXT)
+if (!fixtureReady) {
+  const gen = spawn(voicePython, [join(root, 'service/webrtc/make_fixture.py')], {
+    stdio: 'ignore',
+    env: { ...process.env, HF_HOME: join(root, '_ref/hf') },
+  })
+  const done = await new Promise((res) => {
+    const timer = setTimeout(() => res(false), 120000)
+    gen.on('exit', (code) => {
+      clearTimeout(timer)
+      res(code === 0)
+    })
+    gen.on('error', () => {
+      clearTimeout(timer)
+      res(false)
+    })
+  })
+  fixtureReady = done && existsSync(FIXTURE_WAV) && existsSync(FIXTURE_TXT)
+  if (!fixtureReady) console.warn('! 没能生成语音素材（edge-tts 不可用？），通话断言会退回 stub 模式')
+}
+const fixtureText = fixtureReady ? (await readFile(FIXTURE_TXT, 'utf8')).trim() : ''
+
+// 语音精度单独验：把整句音频直接喂进 pipeline（Chrome 假麦克风会切碎句子，
+// Whisper 对碎片会脑补，不能拿它验准确率）
+const voiceResults = []
+let voiceSelfTest = null
+if (fixtureReady) {
+  const selfOut = await new Promise((res) => {
+    const py = spawn(voicePython, [join(root, 'service/webrtc/selftest.py')], {
+      env: { ...process.env, HF_HOME: join(root, '_ref/hf'), PYTHONIOENCODING: 'utf-8' },
+    })
+    let out = ''
+    py.stdout.on('data', (b) => (out += String(b)))
+    py.on('close', () => res(out))
+    py.on('error', () => res(''))
+    setTimeout(() => res(out), 180000)
+  })
+  const line = selfOut.split('\n').reverse().find((l) => l.trim().startsWith('{'))
+  try {
+    voiceSelfTest = line ? JSON.parse(line) : null
+  } catch {
+    voiceSelfTest = null
+  }
+  const st = voiceSelfTest
+  voiceResults.push({
+    name: '本地 Whisper 转写与原文一致（pipeline 自检）',
+    pass: Boolean(st && st.ok && st.overlap >= 0.8),
+    detail: st ? '原文=' + JSON.stringify(st.source) + ' 转写=' + JSON.stringify(st.transcript) + ' 重合度=' + st.overlap : '自检没跑出结果',
+  })
+  voiceResults.push({
+    name: 'TTS 真的合成了音频（pipeline 自检）',
+    pass: Boolean(st && st.stats && st.stats.tts_bytes > 1000 && st.queued_frames > 0),
+    detail: st ? 'tts_bytes=' + st.stats.tts_bytes + ' 待播帧=' + st.queued_frames + ' 引擎=' + st.tts : '无结果',
+  })
+}
+
 const child = spawn(
   browserPath,
   [
@@ -42,12 +108,22 @@ const child = spawn(
     '--disable-gpu',
     '--enable-unsafe-swiftshader', // 无头下没有 GPU，WebGL 要靠 SwiftShader，缺这个 flag 会直接拿不到上下文
     '--use-fake-device-for-media-stream', // WebRTC 断言要有麦克风；无头环境只能给它一个假设备
+    ...(fixtureReady ? [`--use-file-for-fake-audio-capture=${FIXTURE_WAV}`] : []),
     '--use-fake-ui-for-media-stream',
     '--window-size=1360,900',
     'about:blank',
   ],
-  { stdio: 'ignore' },
+  { stdio: ['ignore', 'ignore', 'pipe'] },
 )
+// 浏览器自己的日志留在文件里：它要是崩了，这里能看到原因（之前只有一句「CDP 超时」）
+const browserErr = []
+const BROWSER_LOG = join(root, '_ref/browser-err.log')
+mkdirSync(join(root, '_ref'), { recursive: true })
+appendFileSync(BROWSER_LOG, `\n=== run @ ${new Date().toISOString()} ===\n`)
+child.stderr?.on('data', (buf) => {
+  browserErr.push(String(buf))
+  appendFileSync(BROWSER_LOG, buf)
+})
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -96,17 +172,19 @@ if (!apiUp) console.warn('! 本地服务没起来（3002），/api 相关断言�
 // 用产品默认的 8 秒上限要等一分钟才断出第一句（自检只调harness，不改产品默认）。
 let webrtc = null
 try {
-  webrtc = spawn('python', [join(root, 'service/webrtc/server.py')], {
+  webrtc = spawn(voicePython, [join(root, 'service/webrtc/server.py')], {
     stdio: 'ignore',
     cwd: join(root, 'service/webrtc'),
     env: {
       ...process.env,
-      AMADEUS_FORCE_STUB: '1',
       WEBRTC_PORT: '8001',
+      HF_HOME: join(root, '_ref/hf'),
+      // 有真素材就用真 ASR/TTS；没有才退回 stub
+      ...(fixtureReady ? {} : { AMADEUS_FORCE_STUB: '1' }),
       VAD_RMS: '600',
-      VAD_SILENCE_MS: '200',
-      VAD_MIN_SPEECH_MS: '60',
-      VAD_MAX_SEGMENT_MS: '2000',
+      VAD_SILENCE_MS: '400',
+      VAD_MIN_SPEECH_MS: '200',
+      VAD_MAX_SEGMENT_MS: '6000',
     },
   })
 } catch {
@@ -139,18 +217,36 @@ class CDP {
       }
     })
   }
-  send(method, params = {}) {
+  send(method, params = {}, timeoutMs = 60000) {
     const id = ++this.id
     return new Promise((ok, fail) => {
-      this.pending.set(id, { ok, fail })
-      this.ws.send(JSON.stringify({ id, method, params }))
+      const timer = setTimeout(() => {
+        this.pending.delete(id)
+        fail(new Error(`CDP 超时（${method}, ${timeoutMs}ms）：浏览器可能已经退出`))
+      }, timeoutMs)
+      this.pending.set(id, {
+        ok: (v) => {
+          clearTimeout(timer)
+          ok(v)
+        },
+        fail: (e) => {
+          clearTimeout(timer)
+          fail(e)
+        },
+      })
+      try {
+        this.ws.send(JSON.stringify({ id, method, params }))
+      } catch (err) {
+        clearTimeout(timer)
+        fail(err)
+      }
     })
   }
   on(fn) {
     this.listeners.push(fn)
   }
-  async evaluate(expression) {
-    const res = await this.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })
+  async evaluate(expression, timeoutMs = 60000) {
+    const res = await this.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }, timeoutMs)
     if (res.exceptionDetails) throw new Error(res.exceptionDetails.exception?.description ?? '页面执行异常')
     return res.result.value
   }
@@ -220,6 +316,7 @@ for (const vp of VIEWPORTS) {
   await cdp.evaluate(`window.__CHECK_MODEL = ${JSON.stringify(modelRecord)}`)
   await cdp.evaluate(`window.__CHECK_VP = ${JSON.stringify(vp.mobile ? 'mobile' : 'desktop')}`)
   await cdp.evaluate(`window.__CHECK_RTC = ${rtcUp ? 'true' : 'false'}`)
+  await cdp.evaluate(`window.__CHECK_SPOKEN = ${JSON.stringify(fixtureText)}`)
 
   const suite = `(async () => {
   const results = []
@@ -514,7 +611,7 @@ for (const vp of VIEWPORTS) {
     }, 30000, 300)
     ok('说话时口型跟着真实音量动', jawMoves, 'jawOpen 峰值=' + jawMax.toFixed(3))
 
-    const jawCloses = await until(() => Number(aliveEl()?.dataset.jaw || 1) < 0.06, 45000, 500)
+    const jawCloses = await until(() => Number(aliveEl()?.dataset.jaw ?? 1) < 0.06, 75000, 250)
     ok('说完话嘴会闭上', jawCloses, 'jawOpen=' + (aliveEl()?.dataset.jaw ?? '无'))
 
     // 切回立绘：3D 到 2D 的降级路径也得通
@@ -566,12 +663,14 @@ for (const vp of VIEWPORTS) {
         }
       })()
       callBtn.click()
+      // 无头 + SwiftShader 下 aiortc 建连接偏慢，30s 会假失败（实测 31s 才 live）
       const live = await until(() => {
         const el = document.querySelector('[data-call]')
         return el && el.dataset.call === 'live'
-      }, 30000)
+      }, 75000, 500)
+      const trace = (window.__CALL_EVENTS || []).map((e) => e.state || e.type).join('→')
       ok('WebRTC 连接建立（data-call=live）', live,
-        '状态=' + ((document.querySelector('[data-call]') || {}).dataset?.call ?? 'none'))
+        '状态=' + ((document.querySelector('[data-call]') || {}).dataset?.call ?? 'none') + ' | 事件: ' + trace)
 
       // 服务端计数器：证明音频真的经 WebRTC 上去了、处理过、又下来了
       let stats = before
@@ -615,6 +714,14 @@ for (const vp of VIEWPORTS) {
       ok('通话里产生了新的转写与回复（只看通话之后新增的）', transcriptShown,
         '新增 ' + freshMsgs.length + ' 条：' +
           freshMsgs.map((m) => m.role + '=' + m.text.slice(0, 10)).join(' / '))
+
+      // 浏览器这层只验「传输 + 真引擎在跑」：Chrome 假麦克风会把句子切碎，
+      // 转写准确率在上面的 pipeline 自检里验（那边喂的是完整一句）
+      const modeOk = before.asr !== 'stub' && before.tts !== 'stub'
+      ok('通话用的是真引擎（本地 Whisper + edge-tts/SiliconFlow）', modeOk,
+        'asr=' + before.asr + ' tts=' + before.tts)
+      ok('浏览器侧转写非空', freshMsgs.some((m) => m.role === 'user' && m.text.length >= 2),
+        '用户消息: ' + freshMsgs.filter((m) => m.role === 'user').map((m) => m.text.slice(0, 12)).join(' / '))
 
       // 挂断
       const hangup = byLabel('挂断语音通话')
@@ -661,7 +768,9 @@ for (const vp of VIEWPORTS) {
   return { results, trust, plays: window.__plays }
 })()`
 
-  const out = await cdp.evaluate(suite)
+  console.log(`\n[进度] ${vp.name} 的断言套件开始执行`)
+  const out = await cdp.evaluate(suite, 8 * 60 * 1000)
+  console.log(`[进度] ${vp.name} 执行完，共 ${out.results.length} 条`)
   for (const r of out.results) allResults.push({ vp: vp.name, ...r })
   allResults.push({ vp: vp.name, name: '无未捕获异常 / 无 console error', pass: jsErrors.length === 0, detail: jsErrors.join(' | ').slice(0, 300) || '0 条' })
   allResults.push({ vp: vp.name, name: '真实播放次数', pass: out.plays > 0, detail: out.plays + ' 次 playing 事件' })
@@ -681,6 +790,8 @@ allResults.push({
 })
 await cdp.send('Emulation.setScriptExecutionDisabled', { value: false })
 
+for (const r of voiceResults) allResults.push({ vp: '语音链路', ...r })
+
 const failed = allResults.filter((r) => !r.pass)
 let currentVp = ''
 for (const r of allResults) {
@@ -691,6 +802,11 @@ for (const r of allResults) {
   console.log(`${r.pass ? 'PASS' : 'FAIL'}  ${r.name}${r.detail ? '   [' + r.detail + ']' : ''}`)
 }
 console.log(`\n共 ${allResults.length} 项检查，失败 ${failed.length} 项`)
+
+if (browserErr.length) {
+  console.log('\n── 浏览器 stderr（末 15 行）──')
+  console.log(browserErr.join('').split('\n').slice(-15).join('\n'))
+}
 
 ws.close()
 child.kill()

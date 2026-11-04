@@ -1,11 +1,12 @@
-node_modules/
+﻿node_modules/
 dist/
 .env
 .env.local
 
-# python 缓存
+# python 缓存与虚拟环境（venv 里有几百 MB 的依赖）
 __pycache__/
 *.pyc
+.venv/
 
 # 素材不入库：立绘/语音/头像的著作权不是本项目的，仓库只存地址与 SHA-256
 public/assets/

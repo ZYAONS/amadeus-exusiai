@@ -13,7 +13,9 @@
     "model": "node tools/fetch-model.mjs",
     "model:demo": "node tools/make-demo-model.mjs",
     "check": "node tools/check.mjs",
-    "dev:webrtc": "python service/webrtc/server.py"
+    "dev:webrtc": "node tools/run-webrtc.mjs",
+    "voice:setup": "python -m venv service/webrtc/.venv && service/webrtc/.venv/Scripts/python.exe -m pip install -r service/webrtc/requirements.txt",
+    "voice:fixture": "service/webrtc/.venv/Scripts/python.exe service/webrtc/make_fixture.py"
   },
   "dependencies": {
     "lucide-react": "^0.469.0",

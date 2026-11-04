@@ -76,57 +76,50 @@ three.js 是动态 import 的，没有模型文件时三件事一起省掉：那
 
 模型出处：[模之屋 · 新约能天使 v2 版分享](https://www.aplaybox.com/details/model/62ZSh6wZ3Alg)（作者用 Blender 做的，身体 arp、面部 faceit、rigify 绑骨）。要按原作者的条款使用，别拿去商用或二次配布。
 
-## 实时语音通话（WebRTC + Whisper + SiliconFlow）
+## 实时语音通话（WebRTC + Whisper + TTS）
 
-工具栏那个电话按钮是一条完整的实时语音链路，跟参考项目同一个架构，只是把服务端换成了 aiortc：
+工具栏那个电话按钮是一条完整的实时语音链路，跟参考项目同一个架构，服务端用 aiortc：
 
 ```
 浏览器麦克风 ──Opus/WebRTC──▶ service/webrtc（python + aiortc）
-                                   │  VAD 断句（能量阈值，20ms 一帧）
-                                   │  Whisper /audio/transcriptions   ← 耳朵
-                                   │  Node 人格服务 /api/chat（流式）  ← 脑子
-                                   │  SiliconFlow /audio/speech        ← 嘴
-浏览器播放 ◀──PCM 48k/WebRTC──────┘   文本事件走 data channel
+                                   │  VAD 断句（20ms 帧能量；用户在说话时会打断她 = barge-in）
+                                   │  Whisper 转写        ← 耳朵（本地 faster-whisper，不需要 key）
+                                   │  Node 人格服务 /api/chat  ← 脑子（流式）
+                                   │  edge-tts 或 SiliconFlow  ← 嘴（edge-tts 不需要 key）
+浏览器播放 ◀──PCM 48k/WebRTC──────┘   转写与回复文本走 data channel
 ```
 
 ```bash
-python -m pip install -r service/webrtc/requirements.txt   # aiortc + av（Windows 上 av 要用预编译 wheel）
-npm run dev        # 前端 1002
-npm run dev:api    # 人格服务 3002
-npm run dev:webrtc # 语音服务 8001
+npm run voice:setup    # 建 service/webrtc/.venv 并装依赖（aiortc/faster-whisper/edge-tts）
+npm run dev            # 前端 1002
+npm run dev:api        # 人格服务 3002
+npm run dev:webrtc     # 语音服务 8001（自动用 venv 里的 python）
 ```
 
-三件事值得说明：
+**不需要任何 key 就是真识别、真合成。** 依次回落，`/health` 会如实报当前档位：
 
-**没有 key 也能跑通全链路。** 缺 `WHISPER_API_KEY` 时转写固定返回一句话，缺 `SILICONFLOW_API_KEY` 时合成本地生成一段提示音——`/health` 会如实标成 `asr: stub / tts: stub`，不会假装是真识别、真配音。这样「音频双向流动 + 转写 + 回复 + 回传播放」全都能被自检断言，等你把 key 填进 `.env` 就换成真的。
+- 转写：`WHISPER_API_KEY` → Whisper API；否则本地 `faster-whisper`（默认 tiny，模型自动下载）；都没有才 stub
+- 合成：`SILICONFLOW_API_KEY` → SiliconFlow（可用自定义音色）；否则 `edge-tts`；都没有才提示音
 
-**没有大模型也不编台词。** 人格服务返回 501 或连不上时，服务端直接从 `src/data/voice-lines.json` 里按关键词挑一句官方原话，和网页版「本地人格模式」同一条规矩。
+**验证方式是闭环的，不是「有个字符串回来了」。** 自检用 `edge-tts` 合成一句已知的话（`npm run voice:fixture`），通过 Chrome 的 `--use-file-for-fake-audio-capture` 把它当成麦克风输入，然后断言：
 
-**VAD 是按真人说话调的。** 默认 900 RMS 起判、静音 700ms 断句、单段最长 8 秒。自检会临时把参数收紧（Chrome 的假麦克风是一串 100ms 的短提示音，用默认值要等一分钟才断出第一句）——调的是 harness，不是产品默认。
+- 服务端 `frames_in` / `segments` / `transcripts` / `replies` / `tts_bytes` / `frames_out` 都是真数字
+- **本地 Whisper 的转写与说的那句字符重合度 ≥ 0.6**（只差标点也算过）
+- 浏览器侧远端音轨 `currentTime` 在走，转写与回复进了对话记录
+- 挂断后状态清除
 
-自检里这条链路的断言全是真数字，不是「元素存在」：服务端 `frames_in`（收到多少 20ms 帧）、`max_rms`（真的有声音）、`segments`/`transcripts`/`replies`/`tts_bytes`（真的走完了 VAD→ASR→LLM→TTS）、`frames_out`（下行有音频），加上浏览器侧 `<audio>` 的 `currentTime` 在走、以及**通话之后新增**的转写与回复才计数（早先版本因为文本恰好相同，被前面文本聊天的记录喂成了假通过）。
+不经浏览器也能验：把素材按 20ms 帧直接喂进 pipeline，实测输出——
 
-## 活人感（眨眼、口型、表情、动作）
+```
+原文:        老板，今天有我的快递吗
+Whisper 转写: 老板,今天有我的快递吗?
+她回复:      老板，有急件！          ← 没配大模型时只引用官方台词库
+tts_bytes:   12096（edge-tts 真合成）| 待播音频帧: 85
+```
 
-模型自带 **52 个 ARKit 形态键**（`eyeBlinkLeft/Right`、`eyeLook*`、`jawOpen`、`mouthSmile*`、`browDown*`…），这套东西让「活的」成为可能，而不是只有一个呼吸循环：
+**为什么用 venv。** 系统里的 Python 3.9 上，CTranslate2（faster-whisper 的内核）一加载模型就 `0xC0000005` 崩掉（int8/float32 都一样，换了 OpenMP 相关的环境变量也没用）；换成 3.11 的独立 venv 后 1 秒内正常加载。所以语音服务固定跑在 `service/webrtc/.venv` 里。
 
-| 做什么 | 靠什么 | 数据来源 |
-|---|---|---|
-| 呼吸 / 重心微移 / 手臂微摆 | `idle` 骨骼动作（8 秒循环） | Blender 里编的 |
-| 说话时的点头与身体前倾 | `talk` 骨骼动作（4 秒循环），说话时 crossfade 过去 | Blender 里编的 |
-| 眨眼 | `eyeBlinkLeft/Right` 形态键，2.4–6 秒随机 | 运行时 |
-| 眼球扫视 | `eyeLookIn/Out/Up/Down` 形态键，每 1.2–3.6 秒换一次目标 | 运行时 |
-| **口型** | `jawOpen` + `mouthFunnel`，由 **WebAudio 分析器读真实音量**驱动 | 正在播放的那段音频 |
-| 情绪表情 | 笑 / 皱眉 / 眯眼 / 抬眉 映射到形态键 | 回复文本算出的情绪标签 |
-| 头部跟随 | `head.x` / `neck.x` 骨骼，在 mixer 之后叠加旋转 | 鼠标位置 |
-
-编这两段动作和导出形态键，踩了两个只能读源码才明白的坑：
-
-**`export_apply` 与形态键互斥。** 开着它就不导出 morph，可脸又是靠 Subsurf 才不糙（1621 → 约 6500 顶点）。解法是**把细分逐形态键烘进顶点**——对每个键单独置 1.0、求值、取顶点坐标，再重建形态键，然后关掉 `export_apply`。
-
-**NLA 才导出 clip。** `export_animation_mode='ACTIONS'` 只认「当前 action 和 NLA 轨道上的动作」，只加 fake user 的 action 导不出去（症状：`clips` 空了，但日志里动作确实编好了）。所以两段动作都推上了 NLA 轨。
-
-自检里这几条也是真数字，不是「属性存在」：眨眼次数在 6 秒内确实增加、`jawOpen` 峰值 0.62 且说完话回到 0.000、`headFollow=1`、`morphs=24`、`clips=idle,talk`。
+**barge-in 已做。** 她还在说话时你一开口，服务端会清空待播音频队列（`interrupts` 计数器会加一），不用等她说完。
 
 ## 动作：接开源数据，不自己编
 
@@ -191,7 +184,9 @@ npm run check                                        # 测开发服务器
 npm run check -- http://127.0.0.1:3002/              # 测构建产物
 ```
 
-无头 Edge + CDP 真跑一遍，桌面 1360×900 与窄屏 390×780 各一遍，外加禁用脚本的一遍。有模型文件、且 python 语音服务能起来时 132 项；缺其中任何一块，对应那组会明确标成 PASS 并写明「跳过」的原因，总数随之减少。它自己会起一个强制离线的 `service/` 和一个强制 stub 的语音服务，所以 `.env` 里有真 key 也不影响结果。
+无头 Edge + CDP 真跑一遍，桌面 1360×900 与窄屏 390×780 各一遍，外加禁用脚本的一遍；语音那条链路另有一组不经浏览器的自检。全量 **136 项**（有模型、有本地 Whisper 时）。缺哪一块，对应那组会明确标成 PASS 并写明「跳过」的原因，总数随之减少。
+
+它自己会起：一个强制离线的 `service/`（所以 `.env` 里有真 key 也不影响结果——语音那套反而**故意**跑真实的本地 Whisper + edge-tts，因为那才是要验证的东西）。
 
 断言里比较关键的是这几条：立绘真的解码出像素（`naturalWidth > 0`），官方语音真的播过（`audio.played` 走到了非零秒），界面显示的台词与 `voice-lines.json` 逐字一致（中配日配各验一遍，并验音频文件真的换到了 `/voice/jp/`），锁定台词条数与信赖度算出来的期望值一致，GLB 真被解析（`data-height` 是从几何算的 1.86）且 WebGL 真光栅化了 74.7 万个三角形，3D→2D→3D 来回切不留多余 canvas，两个视口都没有横向溢出，控制台没有未捕获异常。
 

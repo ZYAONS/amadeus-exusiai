@@ -38,6 +38,7 @@ STATS = {
     "frames_out": 0,
     "max_rms": 0,
     "voiced_frames": 0,
+    "interrupts": 0,
 }
 
 # 没有大模型时的兜底：只引用官方台词库（和网页版「本地人格模式」同一条规矩）
@@ -78,7 +79,14 @@ def offline_reply(text: str) -> str:
 def stats() -> dict:
     import os as _os
 
-    return dict(STATS, asr=asr.mode(), tts=tts.mode(), pid=_os.getpid())
+    return dict(
+        STATS,
+        asr=asr.mode(),
+        tts=tts.mode(),
+        asr_detail=asr.detail(),
+        tts_detail=tts.detail(),
+        pid=_os.getpid(),
+    )
 
 
 class VoiceSession:
@@ -108,6 +116,10 @@ class VoiceSession:
             STATS["voiced_frames"] += 1
 
         if voiced:
+            if not self.in_speech:
+                # barge-in：用户开口就掐掉她还没播完的话，否则你得等她说完才能插话
+                if self._flush_output():
+                    STATS["interrupts"] += 1
             self.in_speech = True
             self.speech_ms += chunk_ms
             self.silence_ms = 0
@@ -120,6 +132,19 @@ class VoiceSession:
 
         if self.in_speech and self.speech_ms >= MAX_SEGMENT_MS:
             self._cut()
+
+    def _flush_output(self) -> bool:
+        """丢掉还没送出去的合成语音，返回是否真的丢了东西"""
+        dropped = 0
+        try:
+            while True:
+                self.out_queue.get_nowait()
+                dropped += 1
+        except asyncio.QueueEmpty:
+            pass
+        if dropped:
+            log.info("barge-in：丢掉 %d 个待播音频帧", dropped)
+        return dropped > 0
 
     def _cut(self) -> None:
         global STATS

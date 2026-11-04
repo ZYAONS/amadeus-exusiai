@@ -43,6 +43,7 @@ export default function App() {
   const [callState, setCallState] = useState<'idle' | 'connecting' | 'live' | 'error'>('idle')
   const [callError, setCallError] = useState<string | null>(null)
   const callRef = useRef<CallHandle | null>(null)
+  const stoppingCall = useRef(false)
 
   const busyRef = useRef(false)
   const sendRef = useRef<(t: string) => void>(() => {})
@@ -119,12 +120,22 @@ export default function App() {
 
   // ---------- WebRTC 语音通话 ----------
   function handleCallEvent(event: CallEvent) {
+    const w = window as unknown as { __CALL_EVENTS?: unknown[] }
+    w.__CALL_EVENTS = [...(w.__CALL_EVENTS ?? []).slice(-19), event]
     if (event.type === 'final') {
       s.push({ role: 'user', text: event.text })
       s.bumpTrust()
     } else if (event.type === 'reply') {
       const emotion = classifyEmotion(event.text)
       emit({ text: event.text, emotion })
+    } else if (event.type === 'state' && event.state.startsWith('pc:')) {
+      // 主动挂断时 pc 会依次发 closed/disconnected，别把它们当成故障
+      if (stoppingCall.current) return
+      const s = event.state.slice(3)
+      if (s === 'connected') setCallState('live')
+      else if (s === 'failed' || s === 'disconnected' || s === 'closed') {
+        setCallState((prev) => (prev === 'idle' ? prev : 'error'))
+      }
     } else if (event.type === 'error') {
       console.warn('[webrtc] 服务端报错：', event.message)
       setCallError(event.message)
@@ -132,6 +143,7 @@ export default function App() {
   }
 
   async function startCall() {
+    stoppingCall.current = false
     setCallError(null)
     setCallState('connecting')
     const audio = document.getElementById('voice-call') as HTMLAudioElement | null
@@ -151,6 +163,7 @@ export default function App() {
   }
 
   function stopCall() {
+    stoppingCall.current = true
     callRef.current?.stop()
     callRef.current = null
     setCallState('idle')
