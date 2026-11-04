@@ -102,7 +102,9 @@ export default function ModelStage({ url, emotion, speaking, onTap, onFail }: Pr
 
         const anims = gltf.animations ?? []
         const mixer = anims.length ? new THREE.AnimationMixer(model) : null
-        if (mixer) mixer.clipAction(anims[0]).play()
+        // 一条 GLB 里可能有多段动画（身体呼吸、配件静止姿势各一段），全部播上，
+        // 只播 animations[0] 会丢配件的那段（症状是光环飘走、头发错位）
+        if (mixer) for (const clip of anims) mixer.clipAction(clip).play()
 
         setMeta({ height: Number(rawHeight.toFixed(2)), anims: anims.length })
         setStatus('ready')

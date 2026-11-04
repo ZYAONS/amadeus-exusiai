@@ -14,6 +14,7 @@ import re
 import sys
 
 import bpy
+from mathutils import Matrix, Vector
 
 
 def parse_args():
@@ -23,7 +24,18 @@ def parse_args():
     max_tex = 1024
     if "--max-tex" in rest:
         max_tex = int(rest[rest.index("--max-tex") + 1])
-    return out, max_tex, "--skins" in rest
+    # 脸和眼睛单独一档：观众只看这一块，其余贴图可以压得很狠
+    face_tex = 4096
+    if "--face-tex" in rest:
+        face_tex = int(rest[rest.index("--face-tex") + 1])
+    animate = "--animate" in rest
+    # 默认把手放下来（台上要的是站姿，不是 A-pose）；要原始姿势加 --no-pose
+    pose = not ("--no-pose" in rest)
+    inward, down = 0.24, 0.24
+    if "--arm-offset" in rest:
+        i = rest.index("--arm-offset")
+        inward, down = (float(v) for v in rest[i + 1].split(","))
+    return out, max_tex, face_tex, ("--skins" in rest or animate), animate, pose, inward, down
 
 
 def collect_tex_images(tree, seen=None):
@@ -165,8 +177,129 @@ def flatten_toon_materials(verbose=True):
     return done
 
 
+def relax_arms_to_idle(inward=0.24, down=0.24):
+    """
+    把 A-pose 的手臂放下来。
+
+    这份模型是 Auto-Rig Pro 骨架，FK 链权重是 0、IK 链权重是 1（试过：转 FK 控制骨，
+    形变骨一动不动），所以只能挪 IK 的手部目标 c_hand_ik.*。
+    挪法用世界坐标算，不猜欧拉轴向。
+    """
+    arm = bpy.data.objects.get("rig")
+    if not arm:
+        print("[pose] 没找到 'rig' 骨架，跳过摆姿势")
+        return []
+    done = []
+    for side, sign in ((".l", 1.0), (".r", -1.0)):
+        pb = arm.pose.bones.get("c_hand_ik" + side)
+        if not pb:
+            continue
+        head_w = arm.matrix_world @ pb.head
+        # 目标：x 向内收 inward，z 向下移 down，y 保持；符号跟着左右手走
+        target = Vector((sign * max(0.06, abs(head_w.x) - inward), head_w.y, head_w.z - down))
+        m = arm.matrix_world @ pb.matrix
+        pb.matrix = arm.matrix_world.inverted() @ (Matrix.Translation(target) @ m.to_3x3().to_4x4())
+        bpy.context.view_layer.update()  # 不 update 就读 pb.head 会拿到旧值（踩过）
+        after = arm.matrix_world @ pb.head
+        done.append(
+            f"{side}: ({head_w.x:+.3f},{head_w.y:+.3f},{head_w.z:+.3f}) -> "
+            f"({after.x:+.3f},{after.y:+.3f},{after.z:+.3f})"
+        )
+    bpy.context.view_layer.update()
+    return done
+
+
+def add_breathing_loop(frames=72, fps=24):
+    """
+    一段 3 秒的呼吸循环：脊柱微微起伏 + 脖子和头极小幅摆动。
+    关键帧打在控制骨上，形变骨会跟着走；导出时 glTF 导出器逐帧采样，
+    所以控制器上的姿势也会被烘进动画里（不需要手工 nla.bake）。
+    """
+    arm = bpy.data.objects.get("rig")
+    if not arm:
+        return []
+    scn = bpy.context.scene
+    scn.render.fps = fps
+    scn.frame_start = 1
+    scn.frame_end = frames
+
+    tracks = {
+        "c_spine_02.x": [("rotation_euler", 0, 0.0), ("rotation_euler", 0, 0.012)],
+        "c_spine_03.x": [("rotation_euler", 0, 0.0), ("rotation_euler", 0, -0.010)],
+        "c_neck.x": [("rotation_euler", 0, 0.0), ("rotation_euler", 0, 0.008)],
+    }
+    touched = []
+    mid = frames // 2
+    for name, keys in tracks.items():
+        pb = arm.pose.bones.get(name)
+        if not pb:
+            continue
+        pb.rotation_mode = "XYZ"
+        base = pb.rotation_euler.copy()
+        for frame, axis, delta in ((1, 0, 0.0), (mid, 0, 1.0), (frames, 0, 0.0)):
+            pb.rotation_euler = base
+            pb.rotation_euler[axis] += (keys[1][2] if frame == mid else 0.0)
+            pb.keyframe_insert("rotation_euler", frame=frame)
+        touched.append(f"{name} ±{keys[1][2]:.3f}rad / {frames}帧")
+    bpy.context.view_layer.update()
+    return touched
+
+
+def collapse_extra_armatures(meshes, usable):
+    """
+    一个网格挂两个骨架修改器时，导出 skin 只能绑其中一个，另一个的形变会被丢掉
+    （症状：光环节变成一个飘在头顶的红色伞状物）。
+    把多余那些修改器应用到网格里，把形变烧进顶点，只留一个骨架给 skin 绑。
+    """
+    keep_names = {a.name for a in usable}
+    done = []
+    for obj in meshes:
+        mods = [m for m in obj.modifiers if m.type == "ARMATURE" and m.object]
+        if len(mods) < 2:
+            continue
+        keep = next((m for m in mods if m.object.name in keep_names), None)
+        if not keep:
+            done.append(f"{obj.name}: 两个骨架都不在选中集里，跳过")
+            continue
+        bpy.context.view_layer.objects.active = obj
+        for name in [m.name for m in mods if m.name != keep.name]:
+            try:
+                bpy.ops.object.modifier_apply(modifier=name)
+                done.append(f"{obj.name}: 把 {name} 烘进顶点，保留 {keep.name}({keep.object.name})")
+            except Exception as exc:
+                done.append(f"{obj.name}: 应用 {name} 失败 -> {exc}")
+    bpy.context.view_layer.update()
+    return done
+
+
+def key_current_pose(armatures, frame=1):
+    """
+    把「当前看到的姿势」钉成关键帧。
+
+    为什么必须做：导出 skin 时网格是按骨架的**静止姿势**绑定的，蒙皮播放的是动画。
+    这几套骨架里配件的静止姿势和作者摆出来的姿势不一样（光环会飘到头顶十几厘米外），
+    不打关键帧就等于把配件丢回静止位置。
+    """
+    touched = []
+    for arm in armatures:
+        if arm.type != "ARMATURE":
+            continue
+        n = 0
+        for pb in arm.pose.bones:
+            pb.keyframe_insert("location", frame=frame)
+            if pb.rotation_mode == "QUATERNION":
+                pb.keyframe_insert("rotation_quaternion", frame=frame)
+            else:
+                pb.keyframe_insert("rotation_euler", frame=frame)
+            pb.keyframe_insert("scale", frame=frame)
+            n += 1
+        touched.append(f"{arm.name}: {n} 根骨")
+    bpy.context.view_layer.update()
+    return touched
+
+
 def main():
-    out, max_tex, with_skins = parse_args()
+    out, max_tex, face_tex, with_skins, animate, do_pose, inward, down = parse_args()
     if not out:
         raise SystemExit("缺少输出路径：blender -b 文件.blend --python tools/blender-export-glb.py -- 输出.glb")
     out = os.path.abspath(out)
@@ -188,6 +321,34 @@ def main():
     bpy.ops.object.select_all(action="DESELECT")
     for obj in picked:
         obj.select_set(True)
+
+    # 骨架必须一起选中：use_selection=True 时不选骨架，导出器就不会生成 skin 和动画
+    # （症状是 skins=0 / animations=0，而模型看着一切正常）
+    arms = set()
+    for obj in picked:
+        for mod in obj.modifiers:
+            if mod.type == "ARMATURE" and mod.object:
+                arms.add(mod.object)
+        anc = obj.parent
+        while anc:
+            if anc.type == "ARMATURE":
+                arms.add(anc)
+            anc = anc.parent
+    # 不在视图层的骨架选不中（比如被 exclude 的集合里的），那些网格只能按静态几何导出
+    in_layer = {o.name for o in bpy.context.view_layer.objects}
+    usable = []
+    skipped = []
+    for arm_obj in arms:
+        if arm_obj.name in in_layer:
+            usable.append(arm_obj)
+        else:
+            skipped.append(arm_obj.name)
+    if skipped:
+        print(f"[export] 这些骨架不在视图层，跳过（它们的网格按静态几何导出）：{sorted(skipped)}")
+    for arm_obj in usable:
+        arm_obj.select_set(True)
+    print(f"[export] 一起选中的骨架：{sorted(a.name for a in usable)}")
+
     bpy.context.view_layer.objects.active = picked[0]
 
     # 2. 贴图降采样（只缩不放大），否则 4K 贴图能把 GLB 顶到上百 MB。
@@ -200,7 +361,7 @@ def main():
             continue
         if not w or not h:
             continue
-        cap = max(max_tex, 2048) if re.search(r"face|eye|眼睛|脸", img.name, re.I) else max_tex
+        cap = face_tex if re.search(r"face|eye|眼睛|脸", img.name, re.I) else max_tex
         if max(w, h) <= cap:
             continue
         k = cap / max(w, h)
@@ -214,6 +375,28 @@ def main():
     for line in flattened:
         print("   -", line)
 
+    # 姿势与动作：必须在挑完对象、压完材质之后做（摆姿势会改形变结果）
+    if do_pose:
+        posed = relax_arms_to_idle(inward, down)
+        print("[pose] 手臂放到自然站姿：")
+        for line in posed:
+            print("   -", line)
+    if animate:
+        tracks = add_breathing_loop()
+        print("[anim] 呼吸循环关键帧：")
+        for line in tracks:
+            print("   -", line)
+    if with_skins:
+        collapsed = collapse_extra_armatures(picked, usable)
+        if collapsed:
+            print("[skin] 多骨架网格收敛：")
+            for line in collapsed:
+                print("   -", line)
+        keyed = key_current_pose(usable)
+        print("[pose] 当前姿势已钉成关键帧（否则配件会回到静止姿势）：")
+        for line in keyed:
+            print("   -", line)
+
     # 3./4. 导出
     bpy.ops.export_scene.gltf(
         filepath=out,
@@ -222,6 +405,7 @@ def main():
         export_apply=True,
         export_skins=with_skins,
         export_animations=with_skins,
+        export_frame_range=animate,
         export_def_bones=with_skins,  # 只要形变骨；rigify 的控制骨一千多根，带上是纯负担
         export_yup=True,
         export_materials="EXPORT",
