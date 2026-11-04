@@ -28,14 +28,15 @@ def parse_args():
     face_tex = 4096
     if "--face-tex" in rest:
         face_tex = int(rest[rest.index("--face-tex") + 1])
-    animate = "--animate" in rest
+    animate = "--animate" in rest or "--alive" in rest
+    alive = "--alive" in rest
     # 默认把手放下来（台上要的是站姿，不是 A-pose）；要原始姿势加 --no-pose
     pose = not ("--no-pose" in rest)
     inward, down = 0.24, 0.24
     if "--arm-offset" in rest:
         i = rest.index("--arm-offset")
         inward, down = (float(v) for v in rest[i + 1].split(","))
-    return out, max_tex, face_tex, ("--skins" in rest or animate), animate, pose, inward, down
+    return out, max_tex, face_tex, ("--skins" in rest or animate), animate, alive, pose, inward, down
 
 
 def collect_tex_images(tree, seen=None):
@@ -421,8 +422,204 @@ def key_current_pose(armatures, frame=1):
     return touched
 
 
+# 「活人感」要用的形态键（ARKit 命名）。其余几十个裁掉：每多一个都要多一份顶点数据
+ALIVE_KEYS = {
+    "eyeBlinkLeft", "eyeBlinkRight",
+    "eyeLookUpLeft", "eyeLookUpRight", "eyeLookDownLeft", "eyeLookDownRight",
+    "eyeLookInLeft", "eyeLookInRight", "eyeLookOutLeft", "eyeLookOutRight",
+    "eyeSquintLeft", "eyeSquintRight", "eyeWideLeft", "eyeWideRight",
+    "jawOpen", "mouthSmileLeft", "mouthSmileRight", "mouthFrownLeft", "mouthFrownRight",
+    "browDownLeft", "browDownRight", "browInnerUp", "cheekSquintLeft", "cheekSquintRight",
+}
+
+
+def prune_shape_keys(meshes):
+    """只留活人感要用的形态键，其余删掉（体积和运行时开销都省）"""
+    report = []
+    for obj in meshes:
+        if obj.type != "MESH" or not obj.data.shape_keys:
+            continue
+        names = [k.name for k in obj.data.shape_keys.key_blocks]
+        # 一个都不在名单里的（比如头发的「修女头发修复」）原样不动：
+        # 那可能是作者调好的外观，删掉会改形状
+        if not (set(names) & ALIVE_KEYS):
+            continue
+        before = len(names)
+        for k in list(obj.data.shape_keys.key_blocks):
+            if k.name not in ALIVE_KEYS and k.name != "Basis":
+                obj.shape_key_remove(k)
+        after = len(obj.data.shape_keys.key_blocks) if obj.data.shape_keys else 0
+        report.append(f"{obj.name}: {before} → {after} 个形态键")
+    return report
+
+
+def _key_bone(pb, frame):
+    pb.keyframe_insert("location", frame=frame)
+    pb.keyframe_insert("rotation_quaternion" if pb.rotation_mode == "QUATERNION" else "rotation_euler", frame=frame)
+
+
+def _bone(arm, name):
+    return arm.pose.bones.get(name)
+
+
+def author_alive_clips(arm, fps=24):
+    """
+    编两段循环动作：idle（8s：呼吸 + 重心微移 + 手臂微摆）和 talk（4s：点头 + 身体前倾 + 手的动作）。
+
+    关键：每条动作第 1 帧把所有骨头钉一遍，保证在运行时用 crossfade 切换 clip 时
+    手臂不会跳回 A-pose（手臂是靠 IK 手部目标摆下来的，切 clip 会丢姿势）。
+    用 export_animation_mode='ACTIONS' 导出，一段 action 就是一个 clip。
+    """
+    import math
+
+    scene = bpy.context.scene
+    scene.render.fps = fps
+    if not arm.animation_data:
+        arm.animation_data_create()
+
+    made = []
+    for name, frames in (("idle", 192), ("talk", 96)):
+        action = bpy.data.actions.new(name)
+        action.use_fake_user = True
+        arm.animation_data.action = action
+        scene.frame_start, scene.frame_end = 1, frames
+
+        # ① 基准帧：所有骨头当前姿势各钉一帧
+        for pb in arm.pose.bones:
+            _key_bone(pb, 1)
+
+        # ② 记录要动画的骨头的基准值
+        base = {}
+        for bone_name in ("c_spine_02.x", "c_spine_03.x", "c_neck.x", "c_head.x",
+                          "c_root_master.x", "c_hand_ik.l", "c_hand_ik.r"):
+            pb = _bone(arm, bone_name)
+            if not pb:
+                continue
+            if pb.rotation_mode == "QUATERNION":
+                pb.rotation_mode = "XYZ"
+            base[bone_name] = (pb.location.copy(), pb.rotation_euler.copy())
+
+        step = 4
+        for f in range(1, frames + 1, step):
+            t = (f - 1) / fps
+            for bone_name, (loc0, rot0) in base.items():
+                pb = _bone(arm, bone_name)
+                pb.location = loc0.copy()
+                pb.rotation_euler = rot0.copy()
+                if name == "idle":
+                    if bone_name == "c_spine_02.x":
+                        pb.rotation_euler.x += math.sin(t * 2 * math.pi / 3.2) * 0.010
+                    elif bone_name == "c_spine_03.x":
+                        pb.rotation_euler.x -= math.sin(t * 2 * math.pi / 3.2) * 0.008
+                    elif bone_name == "c_root_master.x":
+                        pb.location.x += math.sin(t * 2 * math.pi / 8.0) * 0.012
+                        pb.rotation_euler.z += math.sin(t * 2 * math.pi / 8.0) * 0.010
+                    elif bone_name == "c_head.x":
+                        pb.rotation_euler.x += math.sin(t * 2 * math.pi / 5.0) * 0.012
+                        pb.rotation_euler.z += math.sin(t * 2 * math.pi / 7.0) * 0.018
+                    elif bone_name == "c_neck.x":
+                        pb.rotation_euler.x += math.sin(t * 2 * math.pi / 3.2 + 0.6) * 0.006
+                    elif bone_name == "c_hand_ik.l":
+                        pb.location.z += math.sin(t * 2 * math.pi / 6.0) * 0.005
+                    elif bone_name == "c_hand_ik.r":
+                        pb.location.z += math.sin(t * 2 * math.pi / 6.0 + 1.2) * 0.005
+                else:  # talk
+                    if bone_name == "c_head.x":
+                        # 两次点头 + 轻微侧转，像在说话
+                        pb.rotation_euler.x += abs(math.sin(t * 2 * math.pi / 2.0)) * 0.05
+                        pb.rotation_euler.z += math.sin(t * 2 * math.pi / 4.0) * 0.03
+                    elif bone_name == "c_neck.x":
+                        pb.rotation_euler.x += abs(math.sin(t * 2 * math.pi / 2.0)) * 0.02
+                    elif bone_name == "c_spine_03.x":
+                        pb.rotation_euler.x += math.sin(t * 2 * math.pi / 4.0) * 0.02
+                    elif bone_name == "c_spine_02.x":
+                        pb.rotation_euler.x += math.sin(t * 2 * math.pi / 3.2) * 0.010
+                    elif bone_name == "c_hand_ik.l":
+                        pb.location.y -= 0.03 + abs(math.sin(t * 2 * math.pi / 2.0)) * 0.04
+                        pb.location.z += math.sin(t * 2 * math.pi / 2.0) * 0.02
+                    elif bone_name == "c_hand_ik.r":
+                        pb.location.y -= abs(math.sin(t * 2 * math.pi / 2.0 + 1.0)) * 0.02
+                _key_bone(pb, f)
+
+        made.append(f"{name}: {frames} 帧 @ {fps}fps（{frames / fps:.1f}s）")
+        arm.animation_data.action = None
+        # 必须推上 NLA：glTF 的 ACTIONS 模式只导出「当前 action 和 NLA 轨道上的动作」，
+        # 只加 fake user 的 action 是导不出去的（踩过：clips 空了）
+        track = arm.animation_data.nla_tracks.new()
+        track.name = name
+        strip = track.strips.new(name, 1, action)
+        strip.name = name
+        track.mute = True  # 导出时按 track 采样，静音只是为了不在视口里互相叠加
+
+    scene.frame_start, scene.frame_end = 1, 192
+    return made
+
+
+def bake_shape_keys_with_modifiers(obj):
+    """
+    把非骨架修改器（细分）逐形态键烘进顶点，然后重建形态键。
+
+    为什么必须这么绕：glTF 导出器的 export_apply 与形态键互斥（开了就不导 morph），
+    可脸又是靠 Subsurf 才不糙（1621 → 约 6500 顶点）。所以只能是「先把细分烘进每一个
+    形态键的姿态里」，再把 export_apply 关掉，morph 才能带出去。
+    """
+    kb = obj.data.shape_keys.key_blocks
+    names = [k.name for k in kb]
+    original = {k.name: k.value for k in kb}
+
+    baked = {}
+    for name in names:
+        for k in kb:
+            k.value = 1.0 if k.name == name else 0.0
+        bpy.context.view_layer.update()
+        dg = bpy.context.evaluated_depsgraph_get()
+        me = bpy.data.meshes.new_from_object(obj.evaluated_get(dg), preserve_all_data_layers=True, depsgraph=dg)
+        baked[name] = [v.co.copy() for v in me.vertices]
+        bpy.data.meshes.remove(me)
+
+    for k in kb:
+        k.value = 0.0
+    bpy.context.view_layer.update()
+    dg = bpy.context.evaluated_depsgraph_get()
+    new_mesh = bpy.data.meshes.new_from_object(obj.evaluated_get(dg), preserve_all_data_layers=True, depsgraph=dg)
+    for m in [m for m in obj.modifiers if m.type != "ARMATURE"]:
+        obj.modifiers.remove(m)
+    obj.data = new_mesh
+
+    obj.shape_key_add(name="Basis", from_mix=False)
+    for name in names[1:]:
+        key = obj.shape_key_add(name=name, from_mix=False)
+        for i, co in enumerate(baked[name]):
+            key.data[i].co = co
+    # 恢复原先的键值（一般全是 0，但别替作者改表情）
+    for k in obj.data.shape_keys.key_blocks:
+        if k.name in original:
+            k.value = original[k.name]
+    return len(names)
+
+
+def prepare_for_morph_export(meshes):
+    """形态键要 export_apply=False，所以非骨架修改器得自己先烘掉"""
+    report = []
+    for obj in meshes:
+        if obj.type != "MESH":
+            continue
+        nonarm = [m for m in obj.modifiers if m.type != "ARMATURE"]
+        if not nonarm:
+            continue
+        if obj.data.shape_keys:
+            n = bake_shape_keys_with_modifiers(obj)
+            report.append(f"{obj.name}: 细分逐形态键烘进顶点（{n} 个键，{len(obj.data.vertices)} 顶点）")
+            continue
+        for m in nonarm:
+            if obj.modifiers.get(m.name):
+                what = apply_modifier(obj, m.name)
+                report.append(f"{obj.name}: {m.name}({m.type}) -> {what}")
+    return report
+
+
 def main():
-    out, max_tex, face_tex, with_skins, animate, do_pose, inward, down = parse_args()
+    out, max_tex, face_tex, with_skins, animate, alive, do_pose, inward, down = parse_args()
     if not out:
         raise SystemExit("缺少输出路径：blender -b 文件.blend --python tools/blender-export-glb.py -- 输出.glb")
     out = os.path.abspath(out)
@@ -505,10 +702,25 @@ def main():
         for line in posed:
             print("   -", line)
     if animate:
-        tracks = add_breathing_loop()
-        print("[anim] 呼吸循环关键帧：")
-        for line in tracks:
-            print("   -", line)
+        if alive:
+            pruned = prune_shape_keys(picked)
+            print(f"[alive] 形态键裁剪（{len(pruned)} 个网格）：")
+            for line in pruned:
+                print("   -", line)
+            prepared = prepare_for_morph_export(picked)
+            if prepared:
+                print(f"[alive] 修改器预处理（{len(prepared)} 条）：")
+                for line in prepared:
+                    print("   -", line)
+            clips = author_alive_clips(bpy.data.objects["rig"])
+            print("[alive] 编好的动作：")
+            for line in clips:
+                print("   -", line)
+        else:
+            tracks = add_breathing_loop()
+            print("[anim] 呼吸循环关键帧：")
+            for line in tracks:
+                print("   -", line)
     if with_skins:
         report = prepare_meshes_for_skin(picked, "rig")
         print(f"[skin] 蒙皮/静态分派（{len(report)} 条）：")
@@ -517,10 +729,11 @@ def main():
         # 非骨架修改器交给 export_apply 处理：
         # 自己手动应用会在带形态键的网格（比如脸）上失败并回退 convert，
         # 那样连骨架修改器也会被烘掉、蒙皮直接丢失。
-        keyed = key_current_pose([a for a in usable if a.name == "rig"])
-        print("[pose] 身体骨架的当前姿势已钉成关键帧：")
-        for line in keyed:
-            print("   -", line)
+        keyed = key_current_pose([a for a in usable if a.name == "rig"]) if not alive else []
+        if keyed:
+            print("[pose] 身体骨架的当前姿势已钉成关键帧：")
+            for line in keyed:
+                print("   -", line)
 
     # 前面为了应用修改器反复改过选择集，导出前必须恢复：use_selection=True 靠它
     bpy.ops.object.select_all(action="DESELECT")
@@ -536,10 +749,13 @@ def main():
         filepath=out,
         export_format="GLB",
         use_selection=True,
-        export_apply=True,  # 隔离实验确认过：它只应用非骨架修改器，蒙皮照样保留
+        export_apply=not alive,  # 开关头：export_apply 开着就不导形态键，活人感模式下必须关
         export_skins=with_skins,
         export_animations=with_skins,
-        export_frame_range=animate,
+        export_frame_range=animate and not alive,
+        # 一段 action 一个 clip（idle / talk）；活人感靠运行时 crossfade 切换
+        export_animation_mode="NLA_TRACKS" if alive else "ACTIVE_ACTIONS",
+        export_morph=alive,
         export_def_bones=with_skins,  # 只要形变骨；rigify 的控制骨一千多根，带上是纯负担
         export_yup=True,
         export_materials="EXPORT",

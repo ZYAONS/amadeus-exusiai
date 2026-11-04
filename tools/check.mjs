@@ -488,6 +488,34 @@ for (const vp of VIEWPORTS) {
       ok('点 3D 模型后对话框是官方台词', settled,
         'zhSet=' + zhSet.has(dlgText()) + ' len=' + dlgText().length + ' 实际=' + JSON.stringify(dlgText().slice(0, 20)))
     }
+    // ── 活人感：两段动作 + 形态键（眨眼/口型/表情）+ 头部跟随
+    const aliveEl = () => document.querySelector('[data-model]')
+    const clips = (aliveEl()?.dataset.clips || '').split(',').filter(Boolean)
+    ok('导出了 idle / talk 两段动作', clips.includes('idle') && clips.includes('talk'), 'clips=' + clips.join(','))
+    ok('形态键（眨眼/表情）已导出', Number(aliveEl()?.dataset.morphs) >= 20, 'morphs=' + aliveEl()?.dataset.morphs)
+    ok('头部跟随接上了骨骼', aliveEl()?.dataset.headFollow === '1', 'headFollow=' + aliveEl()?.dataset.headFollow)
+
+    const blink0 = Number(aliveEl()?.dataset.blinks || 0)
+    await wait(6000)
+    const blink1 = Number(aliveEl()?.dataset.blinks || 0)
+    ok('会自己眨眼', blink1 > blink0, '眨眼次数 ' + blink0 + ' → ' + blink1 + '（6 秒内）')
+
+    // 口型要现点现量：不能指望前面那次点击的语音还在播（桌面流程慢，早就播完了）
+    const canvasForJaw = document.querySelector('[data-model] canvas')
+    if (canvasForJaw) {
+      canvasForJaw.dispatchEvent(new PointerEvent('pointerdown', { clientX: 120, clientY: 120, bubbles: true }))
+      window.dispatchEvent(new PointerEvent('pointerup', { clientX: 120, clientY: 120 }))
+    }
+    let jawMax = 0
+    const jawMoves = await until(() => {
+      jawMax = Math.max(jawMax, Number(aliveEl()?.dataset.jaw || 0))
+      return jawMax > 0.08
+    }, 30000, 300)
+    ok('说话时口型跟着真实音量动', jawMoves, 'jawOpen 峰值=' + jawMax.toFixed(3))
+
+    const jawCloses = await until(() => Number(aliveEl()?.dataset.jaw || 1) < 0.06, 45000, 500)
+    ok('说完话嘴会闭上', jawCloses, 'jawOpen=' + (aliveEl()?.dataset.jaw ?? '无'))
+
     // 切回立绘：3D 到 2D 的降级路径也得通
     byLabel('设置与档案').click()
     await until(() => byLabel('舞台人物'))

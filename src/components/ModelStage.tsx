@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createAliveRig } from '../lib/alive'
 import type { Emotion } from '../lib/emotion'
 
 type Props = {
@@ -102,9 +103,9 @@ export default function ModelStage({ url, emotion, speaking, onTap, onFail }: Pr
 
         const anims = gltf.animations ?? []
         const mixer = anims.length ? new THREE.AnimationMixer(model) : null
-        // 一条 GLB 里可能有多段动画（身体呼吸、配件静止姿势各一段），全部播上，
-        // 只播 animations[0] 会丢配件的那段（症状是光环飘走、头发错位）
-        if (mixer) for (const clip of anims) mixer.clipAction(clip).play()
+        // 活人感：idle/talk 两段动作 + 24 个形态键（眨眼、眼球扫视、口型、表情）+ 头部跟随
+        const alive = mixer ? createAliveRig(THREE, model, mixer, anims) : null
+        if (alive) alive.attachAudio(document.getElementById('official-voice') as HTMLAudioElement | null)
 
         // 自检用：蒙皮网格数量、动画时钟、某根骨的世界高度——证明动画真在驱动骨架
         type BoneLike = { getWorldPosition: (v: unknown) => void }
@@ -163,6 +164,8 @@ export default function ModelStage({ url, emotion, speaking, onTap, onFail }: Pr
           const dt = clock.getDelta()
           const t = clock.elapsedTime
           if (mixer) mixer.update(dt)
+          // 骨骼动画之后再叠活人感（形态键、眨眼、头部跟随都要在 mixer 之后改）
+          if (alive) alive.update(dt, { speaking: live.current.speaking, emotion: live.current.emotion })
           const talking = live.current.speaking
           pivot.rotation.y = spin + Math.sin(t * 0.35) * 0.05
           pivot.position.y = Math.sin(t * (talking ? 2.6 : 0.9)) * (talking ? 0.012 : 0.006)
@@ -176,6 +179,15 @@ export default function ModelStage({ url, emotion, speaking, onTap, onFail }: Pr
           if (mixer) {
             host.dataset.animT = mixer.time.toFixed(3)
             sampleBone()
+          }
+          if (alive) {
+            const st = alive.stats()
+            host.dataset.clips = st.clips.join(',')
+            host.dataset.morphs = String(st.morphTargets)
+            host.dataset.blinks = String(st.blinks)
+            host.dataset.jaw = st.jaw.toFixed(3)
+            host.dataset.look = st.look
+            host.dataset.headFollow = st.headFollow ? '1' : '0'
           }
           raf = requestAnimationFrame(loop)
         }
