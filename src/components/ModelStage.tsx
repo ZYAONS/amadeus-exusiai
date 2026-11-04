@@ -11,16 +11,16 @@ type Props = {
   onFail: (reason: string) => void
 }
 
-/** 情绪 → 轮廓光颜色与强度 */
+/** 情绪 → 轮廓光颜色与强度（浅色主题下要克制，暗红硬光会让模型显假） */
 const RIM: Record<Emotion, [number, number]> = {
-  neutral: [0xffd98a, 1.4],
-  joy: [0xffc24b, 2.0],
-  smile1: [0xffd98a, 1.6],
-  smile2: [0xffb347, 1.6],
-  shy: [0xff8fa0, 1.5],
-  anger: [0xe0393c, 2.4],
-  sadness: [0x6f86b8, 1.1],
-  unhappy: [0x8c7fb8, 1.2],
+  neutral: [0xffffff, 0.55],
+  joy: [0xffe9b8, 0.7],
+  smile1: [0xfff2d8, 0.6],
+  smile2: [0xffe4b0, 0.62],
+  shy: [0xffd6dd, 0.6],
+  anger: [0xd8645e, 0.8],
+  sadness: [0xb9c8e0, 0.45],
+  unhappy: [0xc9c2dd, 0.5],
 }
 
 /**
@@ -60,16 +60,18 @@ export default function ModelStage({ url, emotion, speaking, onTap, onFail }: Pr
 
         const scene = new THREE.Scene()
         const camera = new THREE.PerspectiveCamera(30, (host.clientWidth || 1) / (host.clientHeight || 1), 0.05, 100)
-        scene.add(new THREE.HemisphereLight(0xffe6c4, 0x101018, 1.2))
-        const key = new THREE.DirectionalLight(0xfff2e0, 2.3)
-        key.position.set(2.2, 3.4, 2.6)
+        // 平光为主：暗环境 + 硬轮廓光会把风格化模型照出「伪人感」；
+        // 但强度不能再叠了——几盏灯相加很容易过曝（实测 6.0 的总强度把她照成一片白）
+        scene.add(new THREE.HemisphereLight(0xffffff, 0xd8d5cf, 1.15))
+        const key = new THREE.DirectionalLight(0xffffff, 2.1)
+        key.position.set(1.6, 3.2, 2.8)
         scene.add(key)
-        const rim = new THREE.DirectionalLight(0xe0393c, 1.6)
-        rim.position.set(-2.4, 2.2, -2.8)
-        scene.add(rim)
-        const fill = new THREE.DirectionalLight(0xffb347, 0.6)
-        fill.position.set(-1.6, 1.0, 2.6)
+        const fill = new THREE.DirectionalLight(0xffffff, 0.62)
+        fill.position.set(-2.0, 1.2, 2.2)
         scene.add(fill)
+        const rim = new THREE.DirectionalLight(0xffffff, 0.45)
+        rim.position.set(-1.2, 1.8, -2.6)
+        scene.add(rim)
 
         const pivot = new THREE.Group()
         scene.add(pivot)
@@ -83,6 +85,29 @@ export default function ModelStage({ url, emotion, speaking, onTap, onFail }: Pr
         // 归一到 1.7 高、脚落在 y=0、水平居中：不管模型原来多大、原点在哪都能站正
         const TARGET_H = 1.7
         const model = gltf.scene
+        // 翅膀/光环的材质没有贴图（chibang），原本是浅米色，在亮背景上会被冲成纯白；
+        // 按参考图给它上金，顺便压一点高光
+        model.traverse((obj) => {
+          const mesh = obj as unknown as {
+            isMesh?: boolean
+            material?: {
+              name?: string
+              map?: unknown
+              color?: { setHex: (h: number) => void }
+              roughness?: number
+              metalness?: number
+              emissive?: { setHex: (h: number) => void }
+              emissiveIntensity?: number
+            }
+          }
+          const mat = mesh.material
+          if (!mesh.isMesh || !mat || mat.map || !/chibang/i.test(mat.name ?? '')) return
+          mat.color?.setHex(0xe8b94a)
+          mat.roughness = 0.5
+          mat.metalness = 0.15
+          mat.emissive?.setHex(0x4a3408)
+          mat.emissiveIntensity = 0.5
+        })
         const raw = new THREE.Box3().setFromObject(model)
         const rawSize = raw.getSize(new THREE.Vector3())
         const rawHeight = rawSize.y || 1
@@ -93,12 +118,16 @@ export default function ModelStage({ url, emotion, speaking, onTap, onFail }: Pr
         model.position.z -= (box.min.z + box.max.z) / 2
         pivot.add(model)
 
-        // 取景按比例算，不写死距离：换任何模型都拍得全，留 12% 余量
+        // 半身构图：只框头顶到髋部，像助理一样与你面对面（全身像会把她推得太远）
         const fov = 32
-        const dist = (TARGET_H * 1.12) / (2 * Math.tan((fov * Math.PI) / 360))
+        const bustTop = TARGET_H * 1.07
+        const bustBottom = TARGET_H * 0.40
+        const visible = bustTop - bustBottom
+        const centerY = (bustTop + bustBottom) / 2
+        const dist = (visible * 1.04) / (2 * Math.tan((fov * Math.PI) / 360))
         camera.fov = fov
-        camera.position.set(0, TARGET_H * 0.55, dist)
-        camera.lookAt(0, TARGET_H * 0.5, 0)
+        camera.position.set(0, centerY + 0.015, dist)
+        camera.lookAt(0, centerY, 0)
         camera.updateProjectionMatrix()
 
         const anims = gltf.animations ?? []
@@ -240,13 +269,15 @@ export default function ModelStage({ url, emotion, speaking, onTap, onFail }: Pr
       data-model={status}
       data-height={meta.height}
       data-anims={meta.anims}
-      className="absolute inset-x-0 bottom-[20vh] top-[10vh] mx-auto w-[min(92vw,760px)] cursor-grab active:cursor-grabbing"
+      className="isolate absolute inset-x-0 bottom-[16vh] top-[8vh] mx-auto w-[min(90vw,560px)] cursor-grab active:cursor-grabbing"
     >
+      {/* 贴纸白：角色背后一小块柔和白底，模仿官方那张的白边（别做太大，会把她吞掉） */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-x-0 bottom-0 h-[46vmin] rounded-full blur-3xl"
+        className="pointer-events-none absolute inset-x-[18%] bottom-[8%] top-[6%] -z-10 rounded-[48%] blur-2xl"
         style={{
-          background: 'radial-gradient(circle, rgba(255,179,71,0.22), rgba(224,57,60,0.14) 45%, rgba(8,8,11,0) 72%)',
+          background:
+            'radial-gradient(circle at 50% 45%, rgba(255,255,255,0.9), rgba(255,255,255,0.45) 52%, rgba(255,255,255,0) 76%)',
         }}
       />
       {status === 'loading' && (

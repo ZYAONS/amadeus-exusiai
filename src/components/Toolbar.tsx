@@ -13,7 +13,7 @@ type Props = {
 }
 
 const btn =
-  'flex h-11 w-11 items-center justify-center rounded-full border border-[var(--po-line)] bg-[rgba(14,14,20,0.86)] text-[var(--po-muted)] backdrop-blur transition hover:border-[var(--po-crimson)] hover:text-[var(--po-bone)]'
+  'flex h-11 w-11 items-center justify-center rounded-full border border-[var(--po-line)] bg-[var(--po-card)] text-[var(--po-ink-soft)] shadow-[0_2px_10px_rgba(23,24,26,0.08)] transition hover:border-[var(--po-crimson)] hover:text-[var(--po-bone)]'
 
 export default function Toolbar({ voice, onToggleVoice, onChange, onSignOut, active, callState, onToggleCall }: Props) {
   const calling = callState === 'live' || callState === 'connecting'
@@ -38,10 +38,10 @@ export default function Toolbar({ voice, onToggleVoice, onChange, onSignOut, act
         onClick={onToggleCall}
         className={`flex h-11 w-11 items-center justify-center rounded-full border backdrop-blur transition ${
           calling
-            ? 'border-[var(--po-crimson)] bg-[rgba(224,57,60,0.24)] text-[var(--po-crimson)]'
+            ? 'border-[var(--po-crimson)] bg-[var(--po-crimson-soft)] text-[var(--po-crimson)]'
             : callState === 'error'
-              ? 'border-[rgba(224,57,60,0.5)] bg-[rgba(14,14,20,0.86)] text-[var(--po-crimson)]'
-              : 'border-[var(--po-line)] bg-[rgba(14,14,20,0.86)] text-[var(--po-muted)] hover:border-[var(--po-crimson)] hover:text-[var(--po-bone)]'
+              ? 'border-[var(--po-crimson)] bg-[var(--po-card)] text-[var(--po-crimson)]'
+              : 'border-[var(--po-line)] bg-[var(--po-card)] text-[var(--po-ink-soft)] hover:border-[var(--po-crimson)] hover:text-[var(--po-crimson)]'
         }`}
       >
         {calling ? <PhoneOff size={17} /> : <Phone size={17} />}

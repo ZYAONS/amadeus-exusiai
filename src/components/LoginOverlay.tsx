@@ -4,9 +4,9 @@ import { OPERATOR } from '../lib/operator'
 export default function LoginOverlay({ onEnter }: { onEnter: (name: string) => void }) {
   const [name, setName] = useState('')
   return (
-    <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-[rgba(4,4,6,0.86)] backdrop-blur-md">
+    <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-[rgba(238,238,234,0.72)] backdrop-blur-[3px]">
       <form
-        className="fade-up w-[min(92vw,440px)] border border-[var(--po-line)] bg-[rgba(8,8,11,0.9)] p-8"
+        className="fade-up w-[min(92vw,440px)] border border-[var(--po-line)] bg-[var(--po-card)] p-8 shadow-[0_18px_60px_rgba(23,24,26,0.14)]"
         onSubmit={(e) => {
           e.preventDefault()
           onEnter(name)
@@ -29,11 +29,11 @@ export default function LoginOverlay({ onEnter }: { onEnter: (name: string) => v
           onChange={(e) => setName(e.target.value)}
           placeholder="博士"
           autoComplete="off"
-          className="mt-2 w-full border border-[var(--po-line)] bg-[rgba(16,16,24,0.9)] px-3 py-2 text-[15px] text-[var(--po-bone)] outline-none focus:border-[var(--po-crimson)]"
+          className="mt-2 w-full border border-[var(--po-line)] bg-[var(--po-card-2)] px-3 py-2 text-[15px] text-[var(--po-ink)] outline-none focus:border-[var(--po-crimson)]"
         />
         <button
           type="submit"
-          className="mt-6 w-full bg-[linear-gradient(92deg,var(--po-amber),var(--po-crimson))] px-4 py-3 text-[15px] font-bold tracking-wide text-[#1a0708] transition hover:brightness-110 active:brightness-95"
+          className="mt-6 w-full bg-[var(--po-crimson)] px-4 py-3 text-[15px] font-bold tracking-wide text-white transition hover:brightness-110 active:brightness-95"
         >
           建立链接
         </button>

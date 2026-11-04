@@ -36,7 +36,7 @@ function Switch({ on, onClick, label }: { on: boolean; onClick: () => void; labe
       aria-label={label}
       onClick={onClick}
       className={`relative h-5 w-9 rounded-full border transition ${
-        on ? 'border-[var(--po-amber)] bg-[rgba(255,179,71,0.3)]' : 'border-[var(--po-line)] bg-[rgba(242,234,224,0.08)]'
+        on ? 'border-[var(--po-crimson)] bg-[var(--po-crimson-soft)]' : 'border-[var(--po-line)] bg-[rgba(23,24,26,0.06)]'
       }`}
     >
       <span
@@ -98,7 +98,7 @@ export default function ConfigPanel({
               disabled={!hasModel}
               onChange={(e) => onConfig({ stage: e.target.value as Config['stage'] })}
               aria-label="舞台人物"
-              className="border border-[var(--po-line)] bg-[rgba(16,16,24,0.9)] px-2 py-1 font-hud text-[11px] disabled:opacity-50"
+              className="border border-[var(--po-line)] bg-[var(--po-card-2)] px-2 py-1 font-hud text-[11px] disabled:opacity-50"
             >
               <option value="3d">3D 模型</option>
               <option value="2d">官方立绘</option>
@@ -115,7 +115,7 @@ export default function ConfigPanel({
               value={config.lang}
               onChange={(e) => onConfig({ lang: e.target.value as Config['lang'] })}
               aria-label="配音与台词语言"
-              className="border border-[var(--po-line)] bg-[rgba(16,16,24,0.9)] px-2 py-1 font-hud text-[11px]"
+              className="border border-[var(--po-line)] bg-[var(--po-card-2)] px-2 py-1 font-hud text-[11px]"
             >
               <option value="zh">中文（蔡书瑾）</option>
               <option value="jp">日本語（石見舞菜香）</option>
@@ -165,7 +165,7 @@ export default function ConfigPanel({
         <button
           type="button"
           onClick={onSignOut}
-          className="w-full border border-[rgba(224,57,60,0.5)] px-3 py-2 text-[12px] text-[var(--po-crimson)] transition hover:bg-[rgba(224,57,60,0.12)]"
+          className="w-full border border-[var(--po-crimson)] px-3 py-2 text-[12px] text-[var(--po-crimson)] transition hover:bg-[var(--po-crimson-soft)]"
         >
           断开链接并清除本地数据
         </button>

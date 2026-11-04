@@ -2,17 +2,29 @@
 @tailwind components;
 @tailwind utilities;
 
-/* 配色令牌：一对颜色只有一个出处，底色与字色永远成对写在同一条规则里 */
+/* 配色令牌：一对颜色只有一个出处，底色与字色永远成对写在同一条规则里。
+   取自官方视觉：纸白背景、墨黑文字、她的红、金翅膀、青（Laterano 水印色） */
 :root {
-  --po-ink: #08080b;
-  --po-ink-2: #101018;
-  --po-bone: #f2eae0;
-  --po-crimson: #e0393c;
-  --po-amber: #ffb347;
-  --po-halo: #ffd98a;
-  --po-line: rgba(242, 234, 224, 0.14);
-  --po-muted: rgba(242, 234, 224, 0.62);
-  color-scheme: dark;
+  --po-bg: #eeeeea;
+  --po-bg-2: #f6f6f2;
+  --po-card: #ffffff;
+  --po-card-2: #f4f4ef;
+  --po-ink: #17181a;
+  --po-ink-soft: #3a3d40;
+  --po-muted: rgba(23, 24, 26, 0.58);
+  --po-line: rgba(23, 24, 26, 0.16);
+  --po-line-strong: rgba(23, 24, 26, 0.3);
+  --po-cyan: #12a7bd;
+  --po-cyan-soft: rgba(18, 167, 189, 0.14);
+  --po-crimson: #b02a2a;
+  --po-crimson-soft: rgba(176, 42, 42, 0.12);
+  --po-amber: #a9761b;
+  --po-amber-soft: rgba(169, 118, 27, 0.14);
+  --po-gold: #e8b94a;
+  --po-halo: #c8871f;
+  /* 旧名字仍在用：bone=正文色、ink 已改为文字色，故 bone 与 ink 同值 */
+  --po-bone: #17181a;
+  color-scheme: light;
 }
 
 html,
@@ -23,11 +35,23 @@ body,
 
 body {
   margin: 0;
-  background: var(--po-ink);
-  color: var(--po-bone);
+  background: var(--po-bg);
+  color: var(--po-ink);
   font-family: system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
+}
+
+/* 纸底：极淡的斜纹 + 青色水印感，模仿官方那张版式 */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    repeating-linear-gradient(135deg, rgba(23, 24, 26, 0.028) 0 1px, transparent 1px 26px),
+    radial-gradient(120% 80% at 50% 0%, rgba(255, 255, 255, 0.9), transparent 60%);
 }
 
 button {
@@ -40,7 +64,7 @@ button {
   width: 6px;
 }
 .scroll-thin::-webkit-scrollbar-thumb {
-  background: rgba(224, 57, 60, 0.5);
+  background: rgba(23, 24, 26, 0.22);
   border-radius: 99px;
 }
 
@@ -112,24 +136,24 @@ button {
   content: '▍';
   margin-left: 2px;
   animation: blink-caret 1s step-end infinite;
-  color: var(--po-amber);
+  color: var(--po-crimson);
 }
 
 /* 情绪：只改立绘的光，不改画面结构（量像素的自检靠这个分辨真假） */
 .emotion-joy img,
 .emotion-smile1 img,
 .emotion-smile2 img {
-  filter: saturate(1.12) brightness(1.06);
+  filter: saturate(1.06) brightness(1.02);
 }
 .emotion-shy img {
-  filter: saturate(1.05) brightness(1.02) sepia(0.12);
+  filter: saturate(1.04) sepia(0.06);
 }
 .emotion-anger img {
-  filter: saturate(1.3) contrast(1.06) brightness(1.02);
+  filter: saturate(1.18) contrast(1.03);
 }
 .emotion-sadness img,
 .emotion-unhappy img {
-  filter: saturate(0.72) brightness(0.9);
+  filter: saturate(0.82) brightness(0.98);
 }
 
 @media (prefers-reduced-motion: reduce) {

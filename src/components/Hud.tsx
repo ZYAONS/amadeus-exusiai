@@ -39,7 +39,7 @@ export default function Hud({ emotion, speaking, listening, trust }: Props) {
           aria-valuemin={0}
           aria-valuemax={TRUST_MAX}
           aria-valuenow={trust}
-          className="mt-1 h-[3px] w-full bg-[rgba(242,234,224,0.14)]"
+          className="mt-1 h-[3px] w-full bg-[var(--po-line)]"
         >
           <div
             className="h-full bg-[linear-gradient(90deg,var(--po-amber),var(--po-crimson))] transition-[width] duration-700"

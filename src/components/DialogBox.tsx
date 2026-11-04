@@ -82,17 +82,17 @@ export default function DialogBox({
       aria-label="对话区"
     >
       <div
-        className="relative mx-auto max-w-[1080px] border border-[var(--po-line)] bg-[rgba(14,14,20,0.82)] backdrop-blur-md"
-        style={{ boxShadow: '0 0 40px rgba(224,57,60,0.10)' }}
+        className="relative mx-auto max-w-[1080px] border border-[var(--po-line)] bg-[var(--po-card)]"
+        style={{ boxShadow: '0 10px 40px rgba(23,24,26,0.10)' }}
       >
-        <div className="h-[2px] w-full bg-[linear-gradient(90deg,var(--po-amber),var(--po-crimson))]" />
+        <div className="h-[2px] w-full bg-[linear-gradient(90deg,var(--po-crimson),var(--po-cyan))]" />
 
         <div className="flex flex-wrap items-center gap-2 px-4 pt-2 font-hud text-[10px] tracking-[0.2em] text-[var(--po-muted)]">
           <span className="text-[var(--po-halo)]">新约能天使</span>
           {/* 当前模式永远要写出来：靠官方台词回答的时候尤其不能让人误以为是真模型 */}
           <span className="border border-[var(--po-line)] px-1.5 py-[1px]">{hint}</span>
           {official && lineTitle && (
-            <span className="border border-[rgba(255,179,71,0.5)] px-1.5 py-[1px] text-[var(--po-amber)]">
+            <span className="border border-[var(--po-line-strong)] px-1.5 py-[1px] text-[var(--po-amber)]">
               官方语音 · {lineTitle}
             </span>
           )}
@@ -137,7 +137,7 @@ export default function DialogBox({
             }}
             placeholder={listening ? '在听……也可以直接打字' : '对她说点什么'}
             aria-label="输入框"
-            className="min-w-0 flex-1 bg-transparent px-1 py-2 text-[15px] outline-none placeholder:text-[rgba(242,234,224,0.35)]"
+            className="min-w-0 flex-1 bg-transparent px-1 py-2 text-[15px] outline-none placeholder:text-[var(--po-muted)]"
           />
           <button
             type="button"
@@ -148,7 +148,7 @@ export default function DialogBox({
             aria-label="语音输入"
             className={`flex h-9 w-9 items-center justify-center rounded-full border transition ${
               listening
-                ? 'border-[var(--po-crimson)] bg-[rgba(224,57,60,0.22)] text-[var(--po-crimson)]'
+                ? 'border-[var(--po-crimson)] bg-[var(--po-crimson-soft)] text-[var(--po-crimson)]'
                 : 'border-[var(--po-line)] text-[var(--po-muted)] hover:text-[var(--po-bone)]'
             } ${micSupported ? '' : 'opacity-40'}`}
           >
@@ -158,7 +158,7 @@ export default function DialogBox({
             type="button"
             onClick={send}
             disabled={busy || !draft.trim()}
-            className="flex h-9 items-center gap-1.5 bg-[linear-gradient(92deg,var(--po-amber),var(--po-crimson))] px-3 text-[13px] font-bold text-[#1a0708] transition disabled:opacity-40"
+            className="flex h-9 items-center gap-1.5 bg-[var(--po-crimson)] px-3 text-[13px] font-bold text-white transition hover:brightness-110 disabled:opacity-40"
           >
             <Send size={13} /> 发送
           </button>

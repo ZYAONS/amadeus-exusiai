@@ -305,10 +305,22 @@ export default function App() {
           className="pointer-events-none absolute inset-0"
           style={{
             background:
-              'radial-gradient(60% 50% at 72% 38%, rgba(224,57,60,0.16), transparent 70%), linear-gradient(180deg,#08080b 0%,#0c0a10 60%,#08080b 100%)',
+              'radial-gradient(70% 60% at 72% 30%, rgba(255,255,255,0.95), transparent 70%), radial-gradient(40% 40% at 18% 82%, rgba(18,167,189,0.10), transparent 70%), linear-gradient(180deg,#f2f2ee 0%,#eaeae6 60%,#e4e4e0 100%)',
           }}
         />
         <ParticleField />
+      {/* 青色水印：呼应官方那张版式里反复出现的 Laterano 字样 */}
+      <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+        {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
+          <span
+            key={i}
+            className="absolute select-none font-hud text-[12px] tracking-[0.42em] text-[rgba(18,167,189,0.20)]"
+            style={{ left: `${6 + (i % 4) * 24}%`, top: `${10 + Math.floor(i / 4) * 74}%` }}
+          >
+            LATERANO
+          </span>
+        ))}
+      </div>
         <div className="emotion-smile1 absolute inset-0 select-none">
           <Stage trust={0} onTap={() => {}} />
         </div>
@@ -328,10 +340,23 @@ export default function App() {
         className="pointer-events-none absolute inset-0"
         style={{
           background:
-            'radial-gradient(60% 50% at 72% 38%, rgba(224,57,60,0.16), transparent 70%), radial-gradient(40% 40% at 20% 80%, rgba(255,179,71,0.10), transparent 70%), linear-gradient(180deg,#08080b 0%,#0c0a10 60%,#08080b 100%)',
+            'radial-gradient(70% 60% at 72% 30%, rgba(255,255,255,0.95), transparent 70%), radial-gradient(45% 45% at 12% 78%, rgba(18,167,189,0.12), transparent 72%), linear-gradient(180deg,#f2f2ee 0%,#eaeae6 60%,#e2e2de 100%)',
         }}
       />
       <ParticleField />
+
+      {/* 青色水印：呼应官方那张版式里反复出现的 Laterano 字样 */}
+      <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+        {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
+          <span
+            key={i}
+            className="absolute select-none font-hud text-[12px] tracking-[0.42em] text-[rgba(18,167,189,0.20)]"
+            style={{ left: `${6 + (i % 4) * 24}%`, top: `${10 + Math.floor(i / 4) * 74}%` }}
+          >
+            LATERANO
+          </span>
+        ))}
+      </div>
 
       <div className={`emotion-${emotion} absolute inset-0 select-none`}>
         {use3d && modelUrl ? (
@@ -353,7 +378,7 @@ export default function App() {
       <Hud emotion={emotion} speaking={speaking} listening={listening} trust={s.trust} />
 
       {use3d && MODEL.demo && (
-        <div className="pointer-events-none absolute left-1/2 top-24 z-20 -translate-x-1/2 border border-[rgba(255,179,71,0.5)] bg-[rgba(8,8,11,0.86)] px-2 py-1 font-hud text-[10px] tracking-[0.2em] text-[var(--po-amber)]">
+        <div className="pointer-events-none absolute left-1/2 top-24 z-20 -translate-x-1/2 border border-[rgba(255,179,71,0.5)] bg-[var(--po-card)] px-2 py-1 font-hud text-[10px] tracking-[0.2em] text-[var(--po-amber)]">
           占位模型 · 换成真模型见 README
         </div>
       )}
@@ -389,7 +414,7 @@ export default function App() {
       {callState !== 'idle' && (
         <div
           data-call={callState}
-          className="pointer-events-none fixed left-1/2 top-3 z-40 -translate-x-1/2 border border-[var(--po-line)] bg-[rgba(8,8,11,0.9)] px-3 py-1.5 font-hud text-[11px] tracking-[0.14em] text-[var(--po-muted)]"
+          className="pointer-events-none fixed left-1/2 top-3 z-40 -translate-x-1/2 border border-[var(--po-line)] bg-[var(--po-card)] px-3 py-1.5 font-hud text-[11px] tracking-[0.14em] text-[var(--po-muted)] shadow-[0_2px_10px_rgba(23,24,26,0.08)]"
         >
           {callState === 'connecting' && '语音链路建立中…'}
           {callState === 'live' && <span className="text-[var(--po-amber)]">● WebRTC 通话中 · 说话就会被听见</span>}
@@ -405,7 +430,7 @@ export default function App() {
         <button
           type="button"
           onClick={armVoice}
-          className="fixed left-1/2 top-4 z-50 -translate-x-1/2 border border-[rgba(255,179,71,0.6)] bg-[rgba(8,8,11,0.92)] px-3 py-1.5 font-hud text-[11px] tracking-[0.14em] text-[var(--po-amber)]"
+          className="fixed left-1/2 top-4 z-50 -translate-x-1/2 border border-[var(--po-line-strong)] bg-[var(--po-card)] px-3 py-1.5 font-hud text-[11px] tracking-[0.14em] text-[var(--po-crimson)] shadow-[0_2px_10px_rgba(23,24,26,0.1)]"
         >
           浏览器拦截了自动播放 · 点一下开启语音
         </button>

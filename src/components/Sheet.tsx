@@ -19,12 +19,12 @@ export default function Sheet({ open, title, subtitle, side = 'right', onClose, 
         type="button"
         aria-label="关闭面板"
         onClick={onClose}
-        className="absolute inset-0 h-full w-full cursor-default bg-[rgba(4,4,6,0.62)] backdrop-blur-[2px]"
+        className="absolute inset-0 h-full w-full cursor-default bg-[rgba(23,24,26,0.28)] backdrop-blur-[2px]"
       />
       <aside
         role="dialog"
         aria-label={title}
-        className={`fade-up absolute bottom-0 top-0 flex w-[min(94vw,420px)] flex-col border-[var(--po-line)] bg-[rgba(10,10,15,0.97)] ${
+        className={`fade-up absolute bottom-0 top-0 flex w-[min(94vw,420px)] flex-col border-[var(--po-line)] bg-[var(--po-card)] shadow-[-8px_0_40px_rgba(23,24,26,0.12)] ${
           side === 'right' ? 'right-0 border-l' : 'left-0 border-r'
         }`}
       >

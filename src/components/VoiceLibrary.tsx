@@ -36,9 +36,9 @@ export default function VoiceLibrary({ open, trust, lang, playingNo, onClose, on
                 onClick={() => onPlay(line)}
                 className={`flex w-full items-start gap-2 border px-2.5 py-2 text-left transition ${
                   open_
-                    ? 'border-[var(--po-line)] hover:border-[var(--po-amber)] hover:bg-[rgba(255,179,71,0.06)]'
+                    ? 'border-[var(--po-line)] hover:border-[var(--po-amber)] hover:bg-[var(--po-amber-soft)]'
                     : 'border-dashed border-[var(--po-line)] opacity-45'
-                } ${active ? 'border-[var(--po-amber)] bg-[rgba(255,179,71,0.08)]' : ''}`}
+                } ${active ? 'border-[var(--po-amber)] bg-[var(--po-amber-soft)]' : ''}`}
               >
                 <span className="mt-[3px] shrink-0 text-[var(--po-amber)]">
                   {open_ ? <Play size={11} /> : <Lock size={11} />}

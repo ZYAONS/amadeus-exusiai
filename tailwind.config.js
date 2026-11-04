@@ -5,11 +5,12 @@ export default {
     extend: {
       colors: {
         // 配色只在这里出现一次；CSS 里对应的 --po-* 令牌见 src/index.css
-        ink: '#08080b',
-        bone: '#f2eae0',
-        crimson: '#e0393c',
-        amber: '#ffb347',
-        halo: '#ffd98a',
+        paper: '#eeeeea',
+        card: '#ffffff',
+        ink: '#17181a',
+        crimson: '#b02a2a',
+        cyan: '#12a7bd',
+        gold: '#e8b94a',
       },
       fontFamily: {
         hud: ['Consolas', 'ui-monospace', 'monospace'],
