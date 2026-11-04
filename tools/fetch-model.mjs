@@ -13,7 +13,9 @@ const OUT = join(root, 'public/assets/model')
 const args = process.argv.slice(2)
 const nameFlag = args.indexOf('--name')
 const outName = nameFlag >= 0 ? args[nameFlag + 1] : null
-const src = args.find((a, i) => !a.startsWith('--') && i !== nameFlag + 1)
+// 没有 --name 时 nameFlag 是 -1，别拿它 +1 去当跳过下标（踩过：路径被当成参数名吃掉）
+const valueIdx = nameFlag >= 0 ? nameFlag + 1 : -1
+const src = args.find((a, i) => !a.startsWith('--') && i !== valueIdx)
 
 if (!src) {
   console.error('用法: node tools/fetch-model.mjs <模型文件.glb|.gltf> [--name 输出名.glb]')

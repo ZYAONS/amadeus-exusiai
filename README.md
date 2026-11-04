@@ -44,7 +44,14 @@ node tools/fetch-model.mjs D:\下载\新约能天使.glb   # 手头已经有 .gl
 npm run model:demo                                # 只想看看 3D 链路通不通（生成一个方盒子，不是她）
 ```
 
-手头是 `.blend` 或 `.pmx` 的话得先在 Blender 里导出：File → Export → glTF 2.0，Format 选 glTF Binary（.glb），有骨骼和动画就把 Skin、Animation 一起勾上。
+手头是 `.blend` 的话用现成的导出脚本（这台机器上 Blender 在 `D:\Blender\4.2\blender.exe`，4.2.9 LTS）：
+
+```bash
+"D:\Blender\4.2\blender.exe" -b "你的模型.blend" --python tools/blender-export-glb.py -- "D:\agentle\out.glb"
+node tools/fetch-model.mjs "D:\agentle\out.glb"
+```
+
+脚本已经在 4.2 上跑通过（网格 + 骨架 + 关键帧 → GLB → 上台，自检里那条 `anims=1` 就是它）。它开了 `export_apply`（应用修改器）和 `export_yup`（Blender 的 Z 轴朝上转成 glTF 的 Y 轴朝上）——这两个不写，模型上台要么缺头发细分，要么躺平在地上。`.pmx` 这类 MMD 模型只能先在 Blender 里用 mmd_tools 导入再导出。
 
 `fetch-model.mjs` 会校验文件头、从 POSITION 的 min/max 算出模型高度、记 SHA-256 到 `src/data/model.json`；模型文件本身落在 `public/assets/model/`，不入库。上台时会归一化到 1.7 高、脚踩 `y=0`、水平居中，取景距离按高度算，所以模型原来多大、原点在哪都不用管；GLB 里带的第一条动画会自动播，拖动可转视角，点一下算「戳一下」。
 
