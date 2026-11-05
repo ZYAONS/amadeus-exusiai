@@ -59,16 +59,20 @@ node tools/fetch-model.mjs "_ref\exusiai.glb"
 
 **三、压平之后 alpha 怎么设，导出器说了算。** 脸是好几层重叠贴片，用半透明混合会互相透成鬼影；但 Blender 4.2 的导出器不读 `blend_method` 也不读 `surface_render_method`，它认的是节点形状——Alpha 前面挂一个 `Math: GREATER_THAN(0.5)` 才导出 `alphaMode=MASK`（源码里的 `detect_alpha_clip`）。眼睛高光那片单独走 BLEND，否则会变成一块白斑。
 
-结果：38 个网格、74.7 万三角形、18.54 MB。贴图分两档——身体衣物压到 512，脸和眼睛留 4096（观众只看这一块，其余可以压狠一点；1024/2048 那版是 25.25 MB）。
+结果：38 个蒙皮网格、66.0 万三角形、22.86 MB，带一段 4 秒的 idle 动画。贴图分两档——身体衣物压到 512，脸和眼睛留 4096（观众只看这一块，其余可以压狠一点）。
 
-手臂也放下来了。这份模型是 Auto-Rig Pro 骨架，**FK 控制骨的权重是 0、IK 是 1**（试过：转 FK 控制骨，形变骨一动不动），所以只能挪 IK 的手部目标 `c_hand_ik.l/r`；挪法用世界坐标算，不猜欧拉轴向：
+手臂也放下来了，但这件事比看上去麻烦：**这份 `.blend` 里 ARP 的 FK 开关是死的**。`rotFK / locFK / scaleFK` 三个约束的 influence 被一条**变量未绑定**的驱动器锁在 0（文件里的 `RIG-骨架_ui.py` 被禁用，ARP 重绑那条链没跑），手写 `influence = 1.0` 会在下一次求值被改回 0——实测把 `arm_fk.l` 转 90°，可见骨动 **0.00°**。反过来把 IK 关掉更糟：IK 解算一撤销，手臂就从「垂在身侧」（`arm_stretch` 垂度 0.99 / 侧展 0.15）退回作者 A-pose（垂度 0.71 / 侧展 0.70）。之前每一版都是这么悄悄变回 A-pose 的，`switch_limbs_to_fk` 现在默认不再调用。
+
+网格实际蒙皮在 `*arm_stretch` / `*forearm_twist` 上，它们跟的是 IK 链，所以手臂只有一条通路：挪 IK 的手部目标 `c_hand_ik.l/r`（用世界坐标算，不猜欧拉轴向）：
 
 ```bash
 # 默认就会把手放下（--no-pose 可关）。数值是「向内收多少 / 向下移多少」
---arm-offset 0.24,0.24
+--arm-offset 0.12,0.24
 ```
 
-`anims=0`：这份 `.blend` 里一条动作都没有。脚本留了 `--animate` 的路径（导出 skin + 呼吸关键帧，实测能出 4 段动画 / 30.13 MB），但配件网格 `chibang.002`（挂在「骨架」上，静止姿势和作者摆的姿势不一样）会变成头顶一团红色弧形，所以**没启用**。台上的她现在是静态站姿，靠运行时的呼吸起伏、微摆和轮廓光活着。
+0.24 会把手压得太贴身体（袖子挤进外套，实测手臂侧展 0.15）；0.12 让手臂离身体一点，手套和手指在画面里看得见（侧展 0.33~0.43）。
+
+`anims=1`：这份 `.blend` 原本一条动作都没有，动画是脚本从开源 mocap 重定向出来再导出 NLA 的（见下一节）。配件网格 `chibang`、头发、光环用**骨骼父子**刚性跟随，否则头一动它们会留在原地（表现为光头 + 头顶飘着发饰）。
 
 `fetch-model.mjs` 会校验 GLB 文件头、记 SHA-256 到 `src/data/model.json`；模型文件本身落在 `public/assets/model/`，不入库。上台时会归一化到 1.7 高、脚踩 `y=0`、水平居中，取景距离按高度算，所以模型原来多大、原点在哪都不用管；GLB 里带的第一条动画会自动播，拖动可转视角，点一下算「戳一下」。
 
@@ -123,28 +127,47 @@ tts_bytes:   12096（edge-tts 真合成）| 待播音频帧: 85
 
 ## 动作：接开源数据，不自己编
 
-上一版的两段循环是我手写的正弦曲线，看得出「机器感」。现在换成把**开源动作重定向**到这份骨架上：
+上一版的两段循环是我手写的正弦曲线，看得出「机器感」。现在台上这段 idle 来自 **CMU Graphics Lab Motion Capture Database**（subject 77 的站姿环顾片段，官方声明可用于任何用途），120fps 的 BVH 原采样：
 
 ```bash
-node tools/fetch-motion.mjs      # 取动作源（three.js 示例里的 Soldier，Mixamo 骨架，含手指骨）
+node tools/fetch-motion.mjs      # 取动作源（CMU 77_01.bvh；另备 three.js 的 Soldier.glb）
 "D:\Blender\4.2\blender.exe" -b "mod\新约阿能v2分享.blend" --python tools/blender-export-glb.py -- ^
-  "_ref\mocap.glb" --max-tex 512 --face-tex 4096 --alive --mocap "_ref\motion\Soldier.glb"
-node tools/fetch-model.mjs "_ref\mocap.glb"
+  "_ref\exusiai.glb" --max-tex 512 --face-tex 4096 --alive --arm-offset 0.12,0.24 ^
+  --mocap "_ref\motion\77_01.bvh" --mocap-window 3.5:7.5 --mocap-scale 0.22 ^
+  --mocap-smooth 0.35 --mocap-loop 0.8 --mocap-arms-ik 0.25
+node tools/fetch-model.mjs "_ref\exusiai.glb"
 ```
 
-重定向的核心不是拷旋转——两侧静止姿势不同（T-pose vs A-pose，骨朝向也不同），所以对每对骨头先算静止差值 `corr = R_target_rest · R_source_rest⁻¹`，每帧令 `target_world = corr · source_world`。ARP 那边要把手臂从 IK 切到 FK（开关就是形变骨上的 `rotIK/rotFK` 约束权重）。
+素材本身是 9.08 秒的**表演动作**（手臂 0.5 秒内甩 20~87°、头转 109°），不是 idle。所以脚本留了四个旋钮把它压成站姿该有的活气：取 3.5~7.5 秒这段、幅度 0.22、0.35 秒滑动平均、结尾 0.8 秒回归首帧。产出 96 帧 @ 24fps，正好 4 秒闭环。
 
-四件踩出来的事：
+映射表按骨架家族分开（`MAPS`，`detect_family` 认命名）：Mixamo 用 `mixamorig:` 前缀，CMU 用 `Hips / LowerBack / Spine / Spine1 / Neck / Neck1 / Head`。CMU 的颈是三节、ARP 只有两节，所以把 `Neck1 + Head` 的增量复合到 `c_head.x`，不丢动作。
 
-**只重定向手臂链。** 脊柱/颈/头的静止朝向和 Mixamo 差太多，硬套校正会把上身拧成驼背（实测截图）。躯干本来有 ARP 的站姿可用，收益不值这个风险，所以只映射肩 → 上臂 → 前臂 → 手这 8 对骨头。
+量化对比——把导出的 GLB 重新导回 Blender，逐帧量（脚本 `tools/verify-clip.py`，96 帧全量）：
+
+| | 上一版（Mixamo Soldier） | 现在（CMU 77_01） |
+|---|---|---|
+| 头水平朝向跨度 | 1.64° | **8.50°** |
+| 头相对首帧总偏角 | 3.27° | **19.24°** |
+| 累计漂移斜率 | 0.358°/秒 | 0.498°/秒（阈值 1） |
+| 首末帧差（循环闭合） | 0.02° | **0.00°** |
+| 单帧最大跳变 | 0.26° | 0.70° |
+| 手臂侧展 `arm_stretch` | 0.70（A-pose，恒定） | 0.33~0.43（跟手部 IK 摆） |
+
+「累计漂移斜率」就是当初「头一直自己转」那个 bug 的量化指标：出问题时约 **+8°/秒**，现在 0.5，且首末帧严格闭合。
+
+五件踩出来的事：
+
+**按时间采样，不能按帧数。** CMU 原数据是 120fps。第一版沿用固定 48 帧均分，等于把这 9 秒塞进 2 秒——播出来是 4 倍速的抽风。现在按文件头的 `Frame Time` 定帧率，按秒数换算输出帧数。顺带：`bpy.ops.import_anim.bvh` 没有 `fps` 参数，得先把场景帧率设成素材帧率再按帧号 1:1 导入。
+
+**取旋转要跟通道无关。** BVH 导入的骨架是 **euler** 驱动的。我原来读 `rotation_quaternion`，拿到的是一条不随时间变化的常量，于是只有头不动、其他都对——直到把源骨全量打印出来才发现三个颈骨的角度「16.0~16.0」恒等。改成从「父级相对矩阵」取旋转，euler 与四元数驱动都吃得住。
+
+**局部增量，不用世界旋转校正。** 两侧静止姿势不同时，`corr = R_target_rest · R_source_rest⁻¹` 这种世界校正在 BVH 上直接失效：BVH 的静止姿势不是规范的 T-pose，骨骼 roll 也是导入器按偏移算的，这个 `corr` 没有物理意义——实测把手臂映射成平举、甚至举过头顶。改成 `q_target = q_target_rest · (q_src_rest⁻¹ · q_src_frame)`，只搬运动作的**变化量**。同样的坑之前也踩过：对脊柱用世界校正会把上身拧成驼背。
 
 **配件必须刚性跟随。** 头发和光圈原本是烘成静态几何的（它们的骨架静止姿势和作者摆的姿势不同），头一动就留在原地——表现为**光头 + 头顶飘着发饰**。先试过「补顶点组 + 骨架修改器」，结果头发被压成一个点（size 0.00）；改成**骨骼父子**（对象挂到 `head.x` / `c_spine_03.x`）才正确。
 
-**头部跟随不能用累积旋转。** 这条 idle 片段一开始不驱动头骨，而我的头部跟随写的是 `bone.quaternion.multiply(增量)` —— 没人复位，于是每帧叠一点，实测**每秒多转 8°**，鼠标停在窗口右边时头会一直自己滚（-8° → -24° → -40° → … → -64°）。现在的写法是自适应：运行时探测这根骨有没有被片段驱动，被驱动就在 mixer 写好的姿态上叠增量，没被驱动就用「基准四元数 × 增量」的绝对量，两种情况都不会累积。
+**头部跟随不能用累积旋转。** 头部跟随原来写的是 `bone.quaternion.multiply(增量)`——没人复位，每帧叠一点，实测**每秒多转 8°**，鼠标停在窗口右边时头会一直自己滚（-8° → -24° → -40° → … → -64°）。现在的写法是自适应：运行时探测这根骨有没有被片段驱动，被驱动就在 mixer 写好的姿态上叠增量，没被驱动就用「基准四元数 × 增量」的绝对量，两种情况都不会累积。片段现在自己会驱动头，所以走的是「叠加」那条。
 
-**躯干和颈头要用「局部增量」，不能用世界旋转校正。** 之前直接对齐世界朝向，把上身拧成了驼背（截图可见）。改成 `q_target = q_target_rest · (q_src_rest⁻¹ · q_src_frame)`——只搬运动作的**变化量**，不试图对齐两侧静止姿势。实测头骨俯仰 3.5°→3.9°→5.6°→4.0°、颈 14.8°→16°→15°，是开源动作给的细微活气。
-
-**这份资产没有手指骨。** `rig` 里只有脚趾骨，手指是烘进手部网格的静态几何——所以「手指张开/收拢」在它身上做不到，只能接受静态手型。裙摆同理：没有可驱动的布料骨。
+手臂走的是另一条路：FK 在这里是死的（见上一节），只能把源素材**手腕相对肩的位置**按臂长比归一后落到 IK 手部目标 `c_hand_ik.l/r` 上，`--mocap-arms-ik 0.25` 是位移系数。实测手臂侧展 0.33~0.43、单帧最大 0.62°，是「跟着呼吸轻轻晃」的量级，不是挥手。
 
 ## 配色与构图
 
@@ -174,7 +197,9 @@ service/server.mjs     OpenAI 兼容端点 → SSE，兼静态托管 dist 与 /r
 service/webrtc/        aiortc 语音服务：server.py（SDP/音轨）+ pipeline.py（VAD/编排）+ asr.py + tts.py
 tools/fetch-assets.mjs 取立绘与配音并核对 SHA-256
 tools/fetch-model.mjs  接本地 3D 模型（校验 + 记录）
-tools/blender-export-glb.py  .blend → GLB：挑对象、压平 toon 材质、降采样贴图、摆站姿、呼吸动画
+tools/blender-export-glb.py  .blend → GLB：挑对象、压平 toon 材质、降采样贴图、摆站姿、mocap 重定向
+tools/fetch-motion.mjs  取开源动作源（CMU BVH / Mixamo GLB）并记 SHA-256
+tools/verify-clip.py    把导出的 GLB 导回 Blender，逐帧量动作幅度、漂移与循环闭合
 tools/make-demo-model.mjs  自造占位 GLB，用来验证 3D 链路
 tools/check.mjs        无头浏览器自检
 tools/prts/            干员页与语音记录的原始 wikitext（数据从它解析出来的）
@@ -192,13 +217,17 @@ npm run check -- http://127.0.0.1:3002/              # 测构建产物
 
 它自己会起：一个强制离线的 `service/`（所以 `.env` 里有真 key 也不影响结果——语音那套反而**故意**跑真实的本地 Whisper + edge-tts，因为那才是要验证的东西）。
 
-断言里比较关键的是这几条：立绘真的解码出像素（`naturalWidth > 0`），官方语音真的播过（`audio.played` 走到了非零秒），界面显示的台词与 `voice-lines.json` 逐字一致（中配日配各验一遍，并验音频文件真的换到了 `/voice/jp/`），锁定台词条数与信赖度算出来的期望值一致，GLB 真被解析（`data-height` 是从几何算的 1.86）且 WebGL 真光栅化了 74.7 万个三角形，3D→2D→3D 来回切不留多余 canvas，两个视口都没有横向溢出，控制台没有未捕获异常。
+断言里比较关键的是这几条：立绘真的解码出像素（`naturalWidth > 0`），官方语音真的播过（`audio.played` 走到了非零秒），界面显示的台词与 `voice-lines.json` 逐字一致（中配日配各验一遍，并验音频文件真的换到了 `/voice/jp/`），锁定台词条数与信赖度算出来的期望值一致，GLB 真被解析（`data-height` 是从几何算的 1.89）且 WebGL 真光栅化了 66.0 万个三角形，3D→2D→3D 来回切不留多余 canvas，两个视口都没有横向溢出，控制台没有未捕获异常。
+
+它验不了「动作好不好看」，也验不了循环会不会跳：`data-boneY` 只能证明骨骼在动，分不出「8.5° 的环顾」和「每秒转 8° 的自转」。那部分由 `tools/verify-clip.py` 逐帧量朝向（幅度 / 漂移斜率 / 首末帧差），数字在上面的动作那节。
 
 ## 素材与版权
 
 立绘、语音、台词文本、干员档案数据著作权归上海鹰角网络科技有限公司所有，本项目仅作个人学习用途。仓库里只放地址和 SHA-256（`assets.manifest.json`），文件靠脚本现取现核对，不随代码分发；中配与日配都来自 PRTS 的官方资源目录。
 
-3D 模型是模之屋上作者分享的同人作品，著作权归原作者；原始 `.blend`（301 MB）和导出的 GLB（25 MB）都不入库，`.gitignore` 已挡住 `mod/`、`*.blend`、`*.glb`。要用请看原发布页的条款。
+动作数据来自 CMU Graphics Lab Motion Capture Database（官方声明可用于任何用途），只记地址与 SHA-256，BVH 文件不入库；重定向后烘进自己的 GLB，不再随附原文件。
+
+3D 模型是模之屋上作者分享的同人作品，著作权归原作者；原始 `.blend`（301 MB）和导出的 GLB（22.86 MB）都不入库，`.gitignore` 已挡住 `mod/`、`*.blend`、`*.glb`。要用请看原发布页的条款。
 
 换素材时 `node tools/fetch-assets.mjs --force`，校验值对不上会打警告。
 
@@ -206,11 +235,13 @@ npm run check -- http://127.0.0.1:3002/              # 测构建产物
 
 2D 舞台是静态立绘加呼吸和光影，没有 Live2D 或 Spine 骨架；游戏里也没有平面骨骼可以白拿。
 
-3D 舞台只认 glTF（`.glb`，VRM 也行）。台上的动作来自**开源 mocap 重定向**（手臂链），加上眨眼、眼球扫视、口型跟真实音量、情绪表情、头部跟随鼠标。**手指和裙摆是静态的**：这份模型的骨架里没有手指骨和布料骨，做不到。
+3D 舞台只认 glTF（`.glb`，VRM 也行）。台上的动作来自**开源 mocap 重定向**（CMU 的躯干 + 颈 + 头，手部位移走 IK 目标），加上眨眼、眼球扫视、口型跟真实音量、情绪表情、头部跟随鼠标。
 
-实时通话那边：Whisper 与 SiliconFlow 没配 key 时是 stub（固定转写 + 提示音）；打断（barge-in）没做，她说话时你说的话会进 VAD 但不会打断她的播放。
+**手指和裙摆目前是静态的，但骨架是有的**——`rig` 里有 38 根手指变形骨、48 根裙摆变形骨（`c_kilt_0X_0Y.l/r`），都在顶点组里、也都导进了 GLB（388 个节点里能查到）。没动的原因是两条：CMU 那套骨架没有手指细节动作可搬（只有 `LeftFingerBase` / `LeftHandIndex1` / `LThumb` 三个粗略骨），而 ARP 自带的 wiggle（布料二级动力学）靠 addon 的 handler 驱动，这份 `.blend` 里脚本被禁用了。想让裙摆飘起来，要么放开脚本、要么自己写一套弹簧骨解算——都不是「搬开源动作」能干的事，所以先不假装有。
 
-18.54 MB 的 GLB，首屏要等一两秒（本机测 2.2 秒到 ready），低端机或冷加载会更久。想更瘦可以 `--max-tex 256`，或给导出加 Draco 压缩（要配 DRACOLoader，没做）。
+实时通话那边：Whisper 与 SiliconFlow 没配 key 时是 stub（固定转写 + 提示音）。打断（barge-in）是做了的，`interrupts` 计数器会加一。
+
+22.86 MB 的 GLB，首屏要等一两秒（本机测 2.2 秒到 ready），低端机或冷加载会更久。想更瘦可以 `--max-tex 256`，或给导出加 Draco 压缩（要配 DRACOLoader，没做）。
 
 语音识别用浏览器的 Web Speech API，Chrome 与 Edge 可用，Firefox 不行，此时输入框照常打字。
 

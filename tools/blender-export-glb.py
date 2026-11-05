@@ -14,7 +14,8 @@ import re
 import sys
 
 import bpy
-from mathutils import Matrix, Vector
+import math
+from mathutils import Matrix, Quaternion, Vector
 
 
 def parse_args():
@@ -33,9 +34,31 @@ def parse_args():
     mocap = None
     if "--mocap" in rest:
         mocap = rest[rest.index("--mocap") + 1]
-    mocap_action = "Idle"
+    mocap_action = None
     if "--mocap-action" in rest:
         mocap_action = rest[rest.index("--mocap-action") + 1]
+    mocap_frames = None
+    if "--mocap-frames" in rest:
+        mocap_frames = int(rest[rest.index("--mocap-frames") + 1])
+    mocap_clip = "idle"
+    if "--mocap-clip" in rest:
+        mocap_clip = rest[rest.index("--mocap-clip") + 1]
+    mocap_window = None
+    if "--mocap-window" in rest:
+        a, b = rest[rest.index("--mocap-window") + 1].split(":")
+        mocap_window = (float(a), float(b))
+    mocap_scale = 1.0
+    if "--mocap-scale" in rest:
+        mocap_scale = float(rest[rest.index("--mocap-scale") + 1])
+    mocap_smooth = 0.0
+    if "--mocap-smooth" in rest:
+        mocap_smooth = float(rest[rest.index("--mocap-smooth") + 1])
+    mocap_loop = 0.0
+    if "--mocap-loop" in rest:
+        mocap_loop = float(rest[rest.index("--mocap-loop") + 1])
+    mocap_arms_ik = 0.0
+    if "--mocap-arms-ik" in rest:
+        mocap_arms_ik = float(rest[rest.index("--mocap-arms-ik") + 1])
     # 默认把手放下来（台上要的是站姿，不是 A-pose）；要原始姿势加 --no-pose
     pose = not ("--no-pose" in rest)
     inward, down = 0.24, 0.24
@@ -43,7 +66,8 @@ def parse_args():
         i = rest.index("--arm-offset")
         inward, down = (float(v) for v in rest[i + 1].split(","))
     return (out, max_tex, face_tex, ("--skins" in rest or animate), animate, alive, pose,
-            inward, down, mocap, mocap_action)
+            inward, down, mocap, mocap_action, mocap_frames, mocap_clip,
+            mocap_window, mocap_scale, mocap_smooth, mocap_loop, mocap_arms_ik)
 
 
 def collect_tex_images(tree, seen=None):
@@ -626,31 +650,116 @@ def prepare_for_morph_export(meshes):
 
 
 # ───────────────────────── 开源动作重定向 ─────────────────────────
-# Mixamo → Auto-Rig Pro 控制骨。腿部不映射：源动作是站姿，腿保持 ARP 自己的 IK 站立，
-# 映射错了腿会扭断，收益却几乎为零。手指也不映射——这份模型的 rig 里没有手指骨。
-MOCAP_MAP = [
-    # 只重定向手臂链。脊柱/颈/头的静止朝向和 Mixamo 差得太多，简单世界旋转校正会把
-    # 上身拧成驼背（实测），而躯干本来就有 ARP 的站姿可用，收益不值这个风险。
-    ("mixamorig:LeftShoulder", "c_shoulder.l", False),
-    ("mixamorig:LeftArm", "c_arm_fk.l", False),
-    ("mixamorig:LeftForeArm", "c_forearm_fk.l", False),
-    ("mixamorig:LeftHand", "c_hand_fk.l", False),
-    ("mixamorig:RightShoulder", "c_shoulder.r", False),
-    ("mixamorig:RightArm", "c_arm_fk.r", False),
-    ("mixamorig:RightForeArm", "c_forearm_fk.r", False),
-    ("mixamorig:RightHand", "c_hand_fk.r", False),
-]
+# 两套开源骨架的命名不一样，映射表要分开；目标骨都是 ARP 的控制骨。
+# 手臂链走「世界旋转校正」，躯干/颈/头走「局部增量」（见下面注释）。
+MAPS = {
+    "mixamo": {
+        "world": [
+            ("mixamorig:LeftShoulder", "c_shoulder.l", False),
+            ("mixamorig:LeftArm", "c_arm_fk.l", False),
+            ("mixamorig:LeftForeArm", "c_forearm_fk.l", False),
+            ("mixamorig:LeftHand", "c_hand_fk.l", False),
+            ("mixamorig:RightShoulder", "c_shoulder.r", False),
+            ("mixamorig:RightArm", "c_arm_fk.r", False),
+            ("mixamorig:RightForeArm", "c_forearm_fk.r", False),
+            ("mixamorig:RightHand", "c_hand_fk.r", False),
+        ],
+        # IK 手臂：源的肩/腕 → 目标 IK 手部目标骨（这份 .blend 里 FK 是死的，只有 IK 链驱动可见骨）
+        "ik_arms": [
+            ("mixamorig:LeftArm", "mixamorig:LeftHand", "c_hand_ik.l"),
+            ("mixamorig:RightArm", "mixamorig:RightHand", "c_hand_ik.r"),
+        ],
+        "local": [
+            ("mixamorig:Spine", "c_spine_01.x"),
+            ("mixamorig:Spine1", "c_spine_02.x"),
+            ("mixamorig:Spine2", "c_spine_03.x"),
+            ("mixamorig:Neck", "c_neck.x"),
+            ("mixamorig:Head", "c_head.x"),
+        ],
+    },
+    # CMU mocap：Hips→LowerBack→Spine→Spine1→Neck→Neck1→Head（官方声明可用于任何用途）
+    #
+    # 全部走「局部增量」，不用世界旋转校正：BVH 的静止姿势不是规范的 T-pose，骨骼 roll
+    # 也是导入器按偏移算出来的，corr = R_t_rest · R_s_rest⁻¹ 对它没有意义
+    # （实测把手臂映射成平举、甚至举过头顶）。局部增量只搬「姿势变化量」，与静止朝向无关。
+    #
+    # 手臂不参与重定向：这份 .blend 里 ARP 的 FK 开关是失效的（rotFK/locFK/scaleFK 的
+    # 影响值被一条变量未绑定的驱动器锁在 0），网格实际蒙皮在 *arm_stretch /
+    # *forearm_twist 上、跟的是 IK 链；给 c_arm_fk.* 打关键帧只会经 arm_fk_pre_pole
+    # 牵动肘部极向，实测把前臂侧展从 0.25 拉到 0.72~0.83（手臂被撑开）。
+    # 所以手臂保持与上一版完全一致的站姿，只搬躯干 + 颈 + 头。
+    "cmu": {
+        "world": [],
+        "ik_arms": [
+            ("LeftArm", "LeftHand", "c_hand_ik.l"),
+            ("RightArm", "RightHand", "c_hand_ik.r"),
+        ],
+        "local": [
+            ("LowerBack", "c_spine_01.x"),
+            ("Spine", "c_spine_02.x"),
+            ("Spine1", "c_spine_03.x"),
+            ("Neck", "c_neck.x"),
+            # CMU 的颈是 Neck→Neck1→Head 三节，ARP 只有 c_neck→c_head 两节，
+            # 所以把 Neck1 与 Head 的增量复合成 c_head 的增量，不丢动作。
+            (("Neck1", "Head"), "c_head.x"),
+        ],
+    },
+}
+
+# 兼容旧名字（早先只支持 Mixamo）
+MOCAP_MAP = MAPS["mixamo"]["world"]
+MOCAP_LOCAL_MAP = MAPS["mixamo"]["local"]
 
 
-# 躯干/颈/头走「局部增量」而不是世界旋转：只把源动作的**变化量**搬到目标骨上，
-# 不试图对齐两侧的绝对静止朝向。之前用世界旋转校正会把上身拧成驼背（实测截图）。
-MOCAP_LOCAL_MAP = [
-    ("mixamorig:Spine", "c_spine_01.x"),
-    ("mixamorig:Spine1", "c_spine_02.x"),
-    ("mixamorig:Spine2", "c_spine_03.x"),
-    ("mixamorig:Neck", "c_neck.x"),
-    ("mixamorig:Head", "c_head.x"),
-]
+def detect_family(bones):
+    names = set(bones)
+    if any(n.startswith("mixamorig:") for n in names):
+        return "mixamo"
+    if {"Hips", "LowerBack", "LeftUpLeg"} <= names:
+        return "cmu"
+    return None
+
+
+def import_motion_source(path):
+    """导入动作源，返回 (armature, src_fps, 说明)。BVH 要按文件里的 Frame Time 定帧率，
+    否则 120fps 的 CMU 数据会被均匀采样成 4 倍速。"""
+    import os
+
+    bpy.ops.object.select_all(action="DESELECT")
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".bvh":
+        fps = 120.0
+        try:
+            with open(path, "r", errors="ignore") as fh:
+                for line in fh:
+                    if line.strip().startswith("Frame Time:"):
+                        fps = 1.0 / float(line.split(":")[1].strip())
+                        break
+                    if line.strip().startswith("MOTION"):
+                        break
+        except Exception:  # noqa: BLE001
+            pass
+        fps = max(1.0, round(fps))
+        bpy.context.scene.render.fps = int(fps)
+        # 该操作符没有 fps 参数：先把场景帧率设成素材帧率，再按帧号 1:1 导入，
+        # 这样动作的帧号范围 / 场景帧率 == 素材真实时长。
+        bpy.ops.import_anim.bvh(filepath=path, use_fps_scale=False,
+                                update_scene_fps=False, update_scene_duration=False)
+        note = f"BVH {int(fps)}fps"
+    else:
+        bpy.ops.import_scene.gltf(filepath=path)
+        fps = 24.0
+        note = "glTF"
+
+    imported = list(bpy.context.selected_objects)
+    src = next((o for o in imported if o.type == "ARMATURE"), None)
+    if not src:
+        raise SystemExit("动作源里没有骨架")
+    # 源自带的网格会挡在镜头前，删掉（只借它的骨架采样）
+    for o in imported:
+        if o.type == "MESH":
+            bpy.data.objects.remove(o, do_unlink=True)
+    return src, fps, note
 
 
 def _basis_quat(pb):
@@ -662,20 +771,38 @@ def _basis_quat(pb):
     return Euler(pb.rotation_euler, pb.rotation_mode).to_quaternion()
 
 
+def _bone_local_rot(ob, bone_name):
+    """骨骼相对父级的旋转（armature 空间矩阵相除）。
+    用它而不是 rotation_quaternion：BVH 导入的骨架是 euler 驱动的，
+    读 rotation_quaternion 会拿到一条不随时间变化的常量，头就永远不动。"""
+    pb = ob.pose.bones[bone_name]
+    m = pb.matrix.to_3x3()
+    if pb.parent:
+        m = pb.parent.matrix.to_3x3().inverted() @ m
+    return m.to_quaternion()
+
+
 def retarget_local_delta(rig, src, pairs, frame):
     """局部增量重定向：q_target = q_target_rest · (q_src_rest⁻¹ · q_src_frame)"""
     for s_name, t_name, src_rest, tgt_rest in pairs:
-        src_pb = src.pose.bones[s_name]
         tgt_pb = rig.pose.bones[t_name]
         if tgt_pb.rotation_mode != "QUATERNION":
             tgt_pb.rotation_mode = "QUATERNION"
-        delta = src_rest.inverted() @ _basis_quat(src_pb)
+        delta = src_rest.inverted() @ _bone_local_rot(src, s_name)
         tgt_pb.rotation_quaternion = tgt_rest @ delta
         tgt_pb.keyframe_insert("rotation_quaternion", frame=frame)
 
 
 def switch_limbs_to_fk(rig):
-    """ARP 的 IK/FK 开关就是形变骨上的 rotIK/rotFK 约束权重"""
+    """ARP 的 IK/FK 开关是形变骨上的 rotIK/rotFK 约束权重。
+
+    但在这份 .blend 里这条路走不通，而且**有害**：
+      - rotFK / locFK / scaleFK 的 influence 被一条变量未绑定的驱动器锁在 0，
+        手写 1.0 会在下一次求值时被改回 0（转 arm_fk.l 90°，可见骨动 0.00°）；
+      - 把 rotIK 关了以后 IK 解算被撤销，手臂从「垂在身侧」（side 0.15 / down 0.99）
+        退回作者 A-pose（side 0.70 / down 0.71）——relax_arms_to_idle 白做。
+    所以默认不再调用；保留函数只为在别的骨架上仍能显式尝试。
+    """
     flipped = 0
     for pb in rig.pose.bones:
         for c in pb.constraints:
@@ -693,109 +820,258 @@ def _rest_rot(ob, bone_name):
     return (ob.matrix_world @ ob.data.bones[bone_name].matrix_local).to_quaternion()
 
 
-def retarget_mocap(rig, mocap_path, action_name="Idle", fps=24, frames=48):
+def retarget_mocap(rig, mocap_path, action_name=None, fps=24, frames=None, clip="idle",
+                   window=None, scale=1.0, smooth=0.0, loop_blend=0.0, arms_ik=0.0):
     """
-    把开源动作（Mixamo 骨架的 GLB）重定向到 ARP 控制骨。
+    把开源动作重定向到 ARP 控制骨。支持 Mixamo（GLB）与 CMU mocap（BVH）两种骨架。
 
-    两侧静止姿势不同（T-pose vs A-pose、骨朝向也不同），不能直接拷旋转：
-    对每对骨头先算静止差值 corr = R_target_rest * R_source_rest^-1，每帧 target_world = corr * source_world。
+    手臂链用「世界旋转校正」；躯干/颈/头用「局部增量」（世界校正套在脊柱上会驼背）。
+    两侧静止姿势不同，所以一律以「窗口起点那一帧的姿势」为基准算增量——
+    这样 clip 第一帧就等于 rig 自己的站姿，切换时不跳。
+
+    四个可调参数是为了把「真实采集的表演动作」压成适合站姿 idle 的幅度：
+      window     取素材的哪一段（秒，如 (0.5, 4.5)），默认整段
+      scale      增量四元数的缩放，1.0 = 原始幅度
+      smooth     滑动平均窗长（秒），压掉 mocap 的高频抖动
+      loop_blend 结尾回归首帧的交叉淡入时长（秒），0 = 不做
+    先采样到内存，再统一做平滑/缩放/收口，最后一次性写关键帧。
     """
-    bpy.ops.object.select_all(action="DESELECT")
-    bpy.ops.import_scene.gltf(filepath=mocap_path)
-    imported = list(bpy.context.selected_objects)
-    src = next((o for o in imported if o.type == "ARMATURE"), None)
-    if not src:
-        raise SystemExit("动作源里没有骨架")
-    # 源自带的网格会挡在镜头前，必须删掉（只借它的骨架采样）
-    for o in imported:
-        if o.type == "MESH":
-            bpy.data.objects.remove(o, do_unlink=True)
+    src, src_fps, note = import_motion_source(mocap_path)
+    family = detect_family([b.name for b in src.data.bones])
+    if family is None:
+        names = sorted(b.name for b in src.data.bones)[:12]
+        raise SystemExit(f"不认识的骨架家族，骨骼名示例：{names}")
+    world_spec = MAPS[family]["world"]
+    local_spec = MAPS[family]["local"]
+    ik_spec = MAPS[family].get("ik_arms", []) if arms_ik > 0 else []
 
-    act = next((a for a in bpy.data.actions if a.name.startswith(action_name)), None)
-    if not act:
-        raise SystemExit(f"动作源里没有 {action_name!r} 动作")
+    act = None
+    if action_name:
+        act = next((a for a in bpy.data.actions if a.name.startswith(action_name)), None)
+    if act is None and src.animation_data and src.animation_data.action:
+        act = src.animation_data.action
+    if act is None:
+        raise SystemExit("动作源里没有可用的动作")
     src.animation_data.action = act
     fr = act.frame_range
-    step = (fr[1] - fr[0]) / frames
+    total = (fr[1] - fr[0]) / float(src_fps)
 
-    switch_limbs_to_fk(rig)
+    if window:
+        w0 = max(0.0, min(total - 0.4, float(window[0])))
+        w1 = max(w0 + 0.4, min(total, float(window[1])))
+    else:
+        w0, w1 = 0.0, total
+    span = w1 - w0
+    if frames is None:
+        frames = int(round(span * fps))
+    frames = max(24, min(240, int(frames)))
+    print(f"[mocap] 源：{note} / 骨架 {family} / 动作 {act.name!r} / 全长 {total:.2f}s / "
+          f"取 {w0:.2f}~{w1:.2f}s → {frames} 帧 @ {fps}fps / scale {scale:g} smooth {smooth:g}s")
 
-    pairs = []
-    for s_name, t_name, is_root in MOCAP_MAP:
+    scene = bpy.context.scene
+    scene.render.fps = int(fps)
+    if rig.animation_data:
+        rig.animation_data.action = None
+    scene.frame_set(int(round(fr[0] + w0 * src_fps)))
+    bpy.context.view_layer.update()
+    # 这里**不**切 FK：见 switch_limbs_to_fk 的说明——关掉 IK 会把 relax_arms_to_idle
+    # 摆好的垂手站姿退回 A-pose（side 0.70 / down 0.71），而 FK 骨根本没驱动可见骨。
+    # 手臂链基准：把「源素材窗口起点那一帧」按世界校正搬到目标骨架上。
+    # 用这个基准时 scale=1 与旧公式 target_world = corr · source_world 完全等价。
+    world_pairs = []
+    for s_name, t_name, is_root in world_spec:
         if s_name not in src.pose.bones or t_name not in rig.pose.bones:
             print(f"  ! 跳过 {s_name} -> {t_name}（骨架里没有）")
             continue
-        pairs.append((s_name, t_name, is_root, _rest_rot(rig, t_name) @ _rest_rot(src, s_name).inverted()))
+        corr = _rest_rot(rig, t_name) @ _rest_rot(src, s_name).inverted()
+        ref = corr @ (src.matrix_world @ src.pose.bones[s_name].matrix).to_quaternion()
+        # 诊断：素材窗口起点的手臂，相对它自己的静止姿势偏了多少（偏太多说明这个窗口的站姿不适合当 idle 基准）
+        off = math.degrees((corr @ _rest_rot(src, s_name)).rotation_difference(ref).angle)
+        print(f"    手臂基准 {s_name:22s} 偏离源静止姿势 {off:5.1f}°")
+        world_pairs.append((s_name, t_name, corr, ref))
 
-    # 局部增量映射的基准（在源动作第 0 帧的姿势下抓基准 = 静止姿势）
-    scene_tmp = bpy.context.scene
-    scene_tmp.frame_set(int(fr[0]))
-    bpy.context.view_layer.update()
     local_pairs = []
-    for s_name, t_name in MOCAP_LOCAL_MAP:
-        if s_name not in src.pose.bones or t_name not in rig.pose.bones:
+    for s_name, t_name in local_spec:
+        parts = [s_name] if isinstance(s_name, str) else list(s_name)
+        if t_name not in rig.pose.bones or any(p not in src.pose.bones for p in parts):
             print(f"  ! 跳过局部增量 {s_name} -> {t_name}")
             continue
-        src_pb = src.pose.bones[s_name]
-        tgt_pb = rig.pose.bones[t_name]
-        if src_pb.rotation_mode != "QUATERNION":
-            from mathutils import Euler
+        local_pairs.append((parts, t_name,
+                            [_bone_local_rot(src, p) for p in parts],
+                            rig.pose.bones[t_name].matrix_basis.to_quaternion()))
 
-            src_pb.rotation_mode = "QUATERNION"
-            src_pb.rotation_quaternion = Euler(src_pb.rotation_euler, "XYZ").to_quaternion()
-        if tgt_pb.rotation_mode != "QUATERNION":
-            from mathutils import Euler
+    # IK 手臂基准：放松后的手部目标位置 + 臂长比（源素材是另一个人，臂长不同，位移要按比例缩）
+    ik_arms = []
+    for sh_name, wr_name, ik_name in ik_spec:
+        if sh_name not in src.pose.bones or wr_name not in src.pose.bones or ik_name not in rig.pose.bones:
+            print(f"  ! 跳过 IK 手臂 {sh_name}/{wr_name} -> {ik_name}")
+            continue
+        sh0 = (src.matrix_world @ src.pose.bones[sh_name].matrix).translation.copy()
+        wr0 = (src.matrix_world @ src.pose.bones[wr_name].matrix).translation.copy()
+        ik_pb = rig.pose.bones[ik_name]
+        anchor = (rig.matrix_world @ ik_pb.matrix).translation.copy()
+        len_s = (wr0 - sh0).length
+        len_t = 0.0
+        for dname in ("arm.l" if ik_name.endswith(".l") else "arm.r", "arm_stretch.l" if ik_name.endswith(".l") else "arm_stretch.r"):
+            db = rig.pose.bones.get(dname)
+            if db:
+                len_t = ((rig.matrix_world @ db.matrix).translation - anchor).length
+                break
+        # 源素材与目标骨架的单位不一样（CMU 的 BVH 是英寸级），所以要按「臂长比」归一：
+        # 位移先除以源臂长变成无量纲比例，再乘以目标臂长。夹太狠会把比例抬成 0.4，
+        # 于是 10 单位的位移被当成 0.48 米塞进去（手会甩出去）。
+        ratio = (len_t / len_s) if len_s > 1e-9 and len_t > 1e-9 else 1.0
+        ratio = max(1e-4, min(10.0, ratio))
+        ik_arms.append((sh_name, wr_name, ik_name, wr0 - sh0, anchor, ratio))
+        print(f"  IK 手臂 {ik_name}: 臂长比 {ratio:.2f} / 位移系数 {arms_ik:g}")
 
-            tgt_pb.rotation_mode = "QUATERNION"
-            tgt_pb.rotation_quaternion = Euler(tgt_pb.rotation_euler, "XYZ").to_quaternion()
-        local_pairs.append((s_name, t_name, src_pb.rotation_quaternion.copy(), tgt_pb.rotation_quaternion.copy()))
+    # ── 采样到内存
+    sampled = {}
+    ik_deltas = {name: [] for _, _, name, _, _, _ in ik_arms}
 
-    scene = bpy.context.scene
-    scene.render.fps = fps
+    def _basis(pb):
+        return pb.matrix_basis.to_quaternion()
+
+    for f in range(1, frames + 1):
+        t_sec = w0 + (f - 1) * span / float(frames)
+        scene.frame_set(int(round(fr[0] + t_sec * src_fps)))
+        bpy.context.view_layer.update()
+        for s_name, t_name, corr, ref in world_pairs:
+            src_rot = (src.matrix_world @ src.pose.bones[s_name].matrix).to_quaternion()
+            delta = (corr @ src_rot) @ ref.inverted()
+            if scale < 1.0:
+                delta = Quaternion().slerp(delta, scale)
+            tgt_pb = rig.pose.bones[t_name]
+            cur = tgt_pb.matrix.translation.copy()
+            tgt_pb.matrix = Matrix.Translation(cur) @ (delta @ ref).to_matrix().to_4x4()
+            bpy.context.view_layer.update()
+            sampled.setdefault(t_name, []).append(_basis(tgt_pb))
+        for parts, t_name, s_rests, t_rest in local_pairs:
+            delta = Quaternion()
+            for p, s_rest in zip(parts, s_rests):
+                delta = delta @ (s_rest.inverted() @ _bone_local_rot(src, p))
+            if scale < 1.0:
+                delta = Quaternion().slerp(delta, scale)
+            tgt_pb = rig.pose.bones[t_name]
+            basis = tgt_pb.matrix_basis.copy()
+            new_basis = (t_rest @ delta).to_matrix().to_4x4()
+            new_basis.translation = basis.translation
+            tgt_pb.matrix_basis = new_basis
+            sampled.setdefault(t_name, []).append(_basis(tgt_pb))
+        for sh_name, wr_name, ik_name, rel0, anchor, ratio in ik_arms:
+            sh = (src.matrix_world @ src.pose.bones[sh_name].matrix).translation
+            wr = (src.matrix_world @ src.pose.bones[wr_name].matrix).translation
+            ik_deltas[ik_name].append((wr - sh) - rel0)
+        bpy.context.view_layer.update()
+
+    # ── 后处理：滑动平均 → 循环收口
+    if smooth > 0:
+        k = max(3, int(round(smooth * fps)))
+        for name, series in sampled.items():
+            out, half = [], k // 2
+            for i in range(len(series)):
+                acc = series[max(0, i - half)]
+                cnt = 1
+                for j in range(max(0, i - half) + 1, min(len(series), i + half + 1)):
+                    acc = acc.slerp(series[j], 1.0 / (cnt + 1))
+                    cnt += 1
+                out.append(acc.copy())
+            sampled[name] = out
+
+    if loop_blend > 0:
+        m = int(round(loop_blend * fps))
+        for name, series in sampled.items():
+            if len(series) <= m + 1:
+                continue
+            first = series[0].copy()
+            for i in range(len(series) - m, len(series)):
+                w = (i - (len(series) - m) + 1) / float(m)
+                series[i] = series[i].slerp(first, min(1.0, w))
+
+    # 手部位移的平滑与收口（向量序列，单独处理）
+    if ik_deltas:
+        k = max(1, int(round(smooth * fps))) if smooth > 0 else 1
+        for name, series in ik_deltas.items():
+            if k > 1:
+                half = k // 2
+                acc2 = []
+                for i in range(len(series)):
+                    s = Vector((0, 0, 0))
+                    c = 0
+                    for j in range(max(0, i - half), min(len(series), i + half + 1)):
+                        s = s + series[j]
+                        c += 1
+                    acc2.append(s / float(c))
+                series[:] = acc2
+        m = int(round(loop_blend * fps)) if loop_blend > 0 else 0
+        if m > 0:
+            for name, series in ik_deltas.items():
+                if len(series) <= m + 1:
+                    continue
+                for i in range(len(series) - m, len(series)):
+                    w = (i - (len(series) - m) + 1) / float(m)
+                    series[i] = series[i].lerp(Vector((0, 0, 0)), min(1.0, w))
+
+    # ── 写关键帧
     if not rig.animation_data:
         rig.animation_data_create()
-    new_act = bpy.data.actions.new("idle")
+    rig.animation_data.action = None
+    new_act = bpy.data.actions.new(clip)
     new_act.use_fake_user = True
     rig.animation_data.action = new_act
     scene.frame_start, scene.frame_end = 1, frames
 
-    rest_src_pos = (src.matrix_world @ src.pose.bones["mixamorig:Hips"].matrix).translation.copy()  # 未映射根骨时不用
-    rest_tgt_pos = (rig.matrix_world @ rig.pose.bones["c_root_master.x"].matrix).translation.copy()
-    ratio = rig.dimensions.z / (src.dimensions.z or 1.0) if src.dimensions.z else 1.0
-    ratio = max(0.5, min(2.0, ratio))
-
-    # 基准帧：所有骨头先钉一遍，切 clip 时不会跳
     for pb in rig.pose.bones:
         pb.keyframe_insert("location", frame=1)
-        pb.keyframe_insert("rotation_quaternion" if pb.rotation_mode == "QUATERNION" else "rotation_euler", frame=1)
         pb.keyframe_insert("scale", frame=1)
+        ch = {0: "rotation_euler", 1: "rotation_quaternion", 2: "rotation_axis_angle"}.get(
+            pb.rotation_mode if isinstance(pb.rotation_mode, int) else -1)
+        if ch is None:
+            ch = "rotation_quaternion" if pb.rotation_mode == "QUATERNION" else (
+                "rotation_axis_angle" if pb.rotation_mode == "AXIS_ANGLE" else "rotation_euler")
+        pb.keyframe_insert(ch, frame=1)
 
-    for f in range(1, frames + 1):
-        scene.frame_set(int(round(fr[0] + (f - 1) * step)))
-        bpy.context.view_layer.update()
-        for s_name, t_name, is_root, corr in pairs:
-            src_m = src.matrix_world @ src.pose.bones[s_name].matrix
-            rot = corr.to_matrix().to_4x4() @ src_m.to_3x3().to_4x4()
-            tgt_pb = rig.pose.bones[t_name]
-            if is_root:
-                pos = rest_tgt_pos + (src_m.translation - rest_src_pos) * ratio
-                tgt_pb.matrix = Matrix.Translation(pos) @ rot
-            else:
-                cur = tgt_pb.matrix.translation.copy()
-                tgt_pb.matrix = Matrix.Translation(cur) @ rot
+    for name, series in sampled.items():
+        pb = rig.pose.bones[name]
+        quat_mode = pb.rotation_mode == "QUATERNION"
+        for i, q in enumerate(series):
+            basis = pb.matrix_basis.copy()
+            nb = q.to_matrix().to_4x4()
+            nb.translation = basis.translation
+            pb.matrix_basis = nb
+            pb.keyframe_insert("rotation_quaternion" if quat_mode else "rotation_euler", frame=i + 1)
+
+    # IK 手部目标的位置关键帧（IK 链是活的，移动目标就会重新解算手臂）
+    for sh_name, wr_name, ik_name, rel0, anchor, ratio in ik_arms:
+        pb = rig.pose.bones[ik_name]
+        rot = pb.matrix.to_3x3().to_4x4()
+        quat_mode = pb.rotation_mode == "QUATERNION"
+        for i, d in enumerate(ik_deltas[ik_name]):
+            pos = anchor + d * (arms_ik * ratio)
+            pb.matrix = Matrix.Translation(pos) @ rot
+            pb.keyframe_insert("location", frame=i + 1)
+            pb.keyframe_insert("rotation_quaternion" if quat_mode else "rotation_euler", frame=i + 1)
+
+    # 量化自检：把生成结果的实际摆幅打出来，用数据判断「有没有动」和「会不会转圈」
+    head = rig.pose.bones.get("c_head.x")
+    stats = ""
+    if head:
+        yaws, pitches = [], []
+        for f in range(1, frames + 1, max(1, frames // 12)):
+            scene.frame_set(f)
             bpy.context.view_layer.update()
-            tgt_pb.keyframe_insert("location", frame=f)
-            tgt_pb.keyframe_insert("rotation_quaternion" if tgt_pb.rotation_mode == "QUATERNION" else "rotation_euler", frame=f)
-        for s_name, t_name, src_rest, tgt_rest in local_pairs:
-            retarget_local_delta(rig, src, [(s_name, t_name, src_rest, tgt_rest)], f)
-        bpy.context.view_layer.update()
+            m = (rig.matrix_world @ head.matrix).to_3x3()
+            yaws.append(math.degrees(math.atan2(m[1][0], m[0][0])))
+            pitches.append(math.degrees(math.asin(max(-1.0, min(1.0, -m[2][1])))))
+        stats = (f" / 头 yaw {min(yaws):+.1f}~{max(yaws):+.1f}° "
+                 f"pitch {min(pitches):+.1f}~{max(pitches):+.1f}° / 首末帧差 {abs(yaws[-1] - yaws[0]):.1f}°")
 
     rig.animation_data.action = None
     track = rig.animation_data.nla_tracks.new()
-    track.name = "idle"
-    track.strips.new("idle", 1, new_act).name = "idle"
+    track.name = clip
+    track.strips.new(clip, 1, new_act).name = clip
     track.mute = True
-    print(f"[mocap] {mocap_path} 的 {act.name!r} → 生成 'idle'（{len(pairs)} 对骨头 / {frames} 帧 @ {fps}fps）")
+    print(f"[mocap] → 生成 {clip!r}（{len(world_pairs)} 世界校正 + {len(local_pairs)} 局部增量 / {frames} 帧{stats}）")
     return new_act
 
 
@@ -840,7 +1116,8 @@ def bind_accessories_to_body(meshes, rig):
 
 def main():
     (out, max_tex, face_tex, with_skins, animate, alive, do_pose,
-     inward, down, mocap, mocap_action) = parse_args()
+     inward, down, mocap, mocap_action, mocap_frames, mocap_clip, \
+        mocap_window, mocap_scale, mocap_smooth, mocap_loop, mocap_arms_ik) = parse_args()
     if not out:
         raise SystemExit("缺少输出路径：blender -b 文件.blend --python tools/blender-export-glb.py -- 输出.glb")
     out = os.path.abspath(out)
@@ -934,7 +1211,10 @@ def main():
                 for line in prepared:
                     print("   -", line)
             if mocap:
-                retarget_mocap(bpy.data.objects["rig"], mocap, mocap_action)
+                retarget_mocap(bpy.data.objects["rig"], mocap, mocap_action,
+                              frames=mocap_frames, clip=mocap_clip, window=mocap_window,
+                              scale=mocap_scale, smooth=mocap_smooth, loop_blend=mocap_loop,
+                              arms_ik=mocap_arms_ik)
             else:
                 clips = author_alive_clips(bpy.data.objects["rig"])
                 print("[alive] 编好的动作（没有给 --mocap，用的是内置手编循环）：")

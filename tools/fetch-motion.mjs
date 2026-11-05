@@ -1,4 +1,4 @@
-﻿// 取开源动作源（用于 rearget 到本模型骨架），只记地址与 SHA-256，文件不入库。
+// 取开源动作源（用于 rearget 到本模型骨架），只记地址与 SHA-256，文件不入库。
 //   node tools/fetch-motion.mjs
 // 默认取 three.js 仓库里那份 Soldiers 的 Idle（Mixamo 骨架，含手指骨）。
 import { createHash } from 'node:crypto'
@@ -15,6 +15,14 @@ const SOURCES = [
     file: 'Soldier.glb',
     url: 'https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/models/gltf/Soldier.glb',
     note: 'three.js 示例资源；骨架是 Mixamo 命名（含手指骨），动作有 Idle/Run/Walk/TPose。只当动作源用，不随仓库分发。',
+  },
+  {
+    file: '77_01.bvh',
+    url: 'https://raw.githubusercontent.com/una-dinosauria/cmu-mocap/master/data/077/77_01.bvh',
+    note:
+      'CMU Graphics Lab Motion Capture Database（subject 77，站姿环顾/手势）。' +
+      '官方声明可自由用于任何用途；这里是 BVH 转码副本，髋部/腿部在此项目里不参与重定向。' +
+      '120fps 原始采样，导入时按文件头的 Frame Time 定帧率，避免被压成快放。',
   },
 ]
 

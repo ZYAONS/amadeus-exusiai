@@ -14,7 +14,8 @@ export default defineConfig({
       '/rtc': { target: 'http://127.0.0.1:8001', changeOrigin: true },
     },
     // 编辑器/工具写入时的临时目录会被 watcher 抓到并 EBUSY（真踩过）；
-    // public/assets 是静态素材，几十 MB 的模型文件一放进去就能把 watcher 顶死，一律不监视
-    watch: { ignored: ['**/.*.tmpdir/**', '**/.*.tmp', '**/public/assets/**'] },
+    // public/assets 是静态素材，几十 MB 的模型文件一放进去就能把 watcher 顶死，一律不监视。
+    // _ref 是导出/实验的中间产物（.glb、.bvh、.blend、日志），Blender 还在写就会被 EBUSY 打断。
+    watch: { ignored: ['**/.*.tmpdir/**', '**/.*.tmp', '**/public/assets/**', '**/_ref/**'] },
   },
 })

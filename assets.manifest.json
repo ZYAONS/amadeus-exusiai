@@ -401,6 +401,12 @@
       "sha256": "dfb230fc1f942f259dd00281a1186953ad602fc5d69067ce63e24b2aa439736b",
       "bytes": 2160468,
       "note": "three.js 示例资源；骨架是 Mixamo 命名（含手指骨），动作有 Idle/Run/Walk/TPose。只当动作源用，不随仓库分发。"
+    },
+    "77_01.bvh": {
+      "url": "https://raw.githubusercontent.com/una-dinosauria/cmu-mocap/master/data/077/77_01.bvh",
+      "sha256": "12ac3c51f3c5d3411c7a31c1f53789579723a843c00679541521d07a8be85949",
+      "bytes": 836011,
+      "note": "CMU Graphics Lab Motion Capture Database（subject 77，站姿环顾/手势）。官方声明可自由用于任何用途；这里是 BVH 转码副本，髋部/腿部在此项目里不参与重定向。120fps 原始采样，导入时按文件头的 Frame Time 定帧率，避免被压成快放。"
     }
   }
 }
