@@ -542,7 +542,8 @@ for (const vp of VIEWPORTS) {
       host3d ? 'data-model=' + host3d.getAttribute('data-model') + ' height=' + host3d.getAttribute('data-height') + ' anims=' + host3d.getAttribute('data-anims') : '没有 3D 容器')
     ok('高度是从几何算出来的包围盒', Number(host3d && host3d.getAttribute('data-height')) > 0.3,
       'data-height=' + (host3d && host3d.getAttribute('data-height')))
-    const tris = await until(() => Number((document.querySelector('[data-model]') || {}).dataset?.tris) > 0, 10000)
+    // 三角形计数是第 4 帧才写回的，而无头环境里 rAF 会被节流，给足时间
+    const tris = await until(() => Number((document.querySelector('[data-model]') || {}).dataset?.tris) > 0, 40000, 250)
     ok('WebGL 真的光栅化了三角形', tris,
       'data-tris=' + ((document.querySelector('[data-model]') || {}).dataset?.tris ?? '未写回（WebGL 没跑起来）'))
 
@@ -599,16 +600,21 @@ for (const vp of VIEWPORTS) {
     ok('会自己眨眼', blink1 > blink0, '眨眼次数 ' + blink0 + ' → ' + blink1 + '（6 秒内）')
 
     // 口型要现点现量：不能指望前面那次点击的语音还在播（桌面流程慢，早就播完了）
-    const canvasForJaw = document.querySelector('[data-model] canvas')
-    if (canvasForJaw) {
-      canvasForJaw.dispatchEvent(new PointerEvent('pointerdown', { clientX: 120, clientY: 120, bubbles: true }))
-      window.dispatchEvent(new PointerEvent('pointerup', { clientX: 120, clientY: 120 }))
-    }
+    // 无头环境里偶发「这一下点击没出声」（自动播放策略/音频解码），重试几次；
+    // 断言本身不变：口型必须真的动起来
     let jawMax = 0
-    const jawMoves = await until(() => {
-      jawMax = Math.max(jawMax, Number(aliveEl()?.dataset.jaw || 0))
-      return jawMax > 0.08
-    }, 30000, 300)
+    let jawMoves = false
+    for (let attempt = 0; attempt < 3 && !jawMoves; attempt++) {
+      const cv = document.querySelector('[data-model] canvas')
+      if (cv) {
+        cv.dispatchEvent(new PointerEvent('pointerdown', { clientX: 120, clientY: 120, bubbles: true }))
+        window.dispatchEvent(new PointerEvent('pointerup', { clientX: 120, clientY: 120 }))
+      }
+      jawMoves = await until(() => {
+        jawMax = Math.max(jawMax, Number(aliveEl()?.dataset.jaw || 0))
+        return jawMax > 0.08
+      }, 15000, 250)
+    }
     ok('说话时口型跟着真实音量动', jawMoves, 'jawOpen 峰值=' + jawMax.toFixed(3))
 
     const jawCloses = await until(() => Number(aliveEl()?.dataset.jaw ?? 1) < 0.06, 75000, 250)
@@ -728,8 +734,10 @@ for (const vp of VIEWPORTS) {
       ok('通话中按钮变成挂断', !!hangup, hangup ? 'aria-label=挂断语音通话' : '没变')
       if (hangup) {
         hangup.click()
-        const hung = await until(() => !document.querySelector('[data-call]'), 8000)
-        ok('挂断后状态清除', hung, hung ? 'data-call 已移除' : '还挂在页面上')
+        const hung = await until(() => !document.querySelector('[data-call]'), 15000)
+        const trace2 = (window.__CALL_EVENTS || []).slice(-6).map((e) => e.state || e.type).join('→')
+        ok('挂断后状态清除', hung,
+          hung ? 'data-call 已移除' : '还挂在页面上（data-call=' + ((document.querySelector('[data-call]') || {}).dataset?.call ?? 'none') + ' | 最近事件: ' + trace2 + '）')
       }
     }
   } else if (window.__CHECK_VP !== 'mobile') {

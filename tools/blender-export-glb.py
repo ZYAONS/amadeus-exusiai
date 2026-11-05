@@ -642,6 +642,38 @@ MOCAP_MAP = [
 ]
 
 
+# 躯干/颈/头走「局部增量」而不是世界旋转：只把源动作的**变化量**搬到目标骨上，
+# 不试图对齐两侧的绝对静止朝向。之前用世界旋转校正会把上身拧成驼背（实测截图）。
+MOCAP_LOCAL_MAP = [
+    ("mixamorig:Spine", "c_spine_01.x"),
+    ("mixamorig:Spine1", "c_spine_02.x"),
+    ("mixamorig:Spine2", "c_spine_03.x"),
+    ("mixamorig:Neck", "c_neck.x"),
+    ("mixamorig:Head", "c_head.x"),
+]
+
+
+def _basis_quat(pb):
+    """取骨骼的局部（basis）旋转，旋转模式统一成四元数"""
+    if pb.rotation_mode == "QUATERNION":
+        return pb.rotation_quaternion.copy()
+    from mathutils import Euler
+
+    return Euler(pb.rotation_euler, pb.rotation_mode).to_quaternion()
+
+
+def retarget_local_delta(rig, src, pairs, frame):
+    """局部增量重定向：q_target = q_target_rest · (q_src_rest⁻¹ · q_src_frame)"""
+    for s_name, t_name, src_rest, tgt_rest in pairs:
+        src_pb = src.pose.bones[s_name]
+        tgt_pb = rig.pose.bones[t_name]
+        if tgt_pb.rotation_mode != "QUATERNION":
+            tgt_pb.rotation_mode = "QUATERNION"
+        delta = src_rest.inverted() @ _basis_quat(src_pb)
+        tgt_pb.rotation_quaternion = tgt_rest @ delta
+        tgt_pb.keyframe_insert("rotation_quaternion", frame=frame)
+
+
 def switch_limbs_to_fk(rig):
     """ARP 的 IK/FK 开关就是形变骨上的 rotIK/rotFK 约束权重"""
     flipped = 0
@@ -695,6 +727,29 @@ def retarget_mocap(rig, mocap_path, action_name="Idle", fps=24, frames=48):
             continue
         pairs.append((s_name, t_name, is_root, _rest_rot(rig, t_name) @ _rest_rot(src, s_name).inverted()))
 
+    # 局部增量映射的基准（在源动作第 0 帧的姿势下抓基准 = 静止姿势）
+    scene_tmp = bpy.context.scene
+    scene_tmp.frame_set(int(fr[0]))
+    bpy.context.view_layer.update()
+    local_pairs = []
+    for s_name, t_name in MOCAP_LOCAL_MAP:
+        if s_name not in src.pose.bones or t_name not in rig.pose.bones:
+            print(f"  ! 跳过局部增量 {s_name} -> {t_name}")
+            continue
+        src_pb = src.pose.bones[s_name]
+        tgt_pb = rig.pose.bones[t_name]
+        if src_pb.rotation_mode != "QUATERNION":
+            from mathutils import Euler
+
+            src_pb.rotation_mode = "QUATERNION"
+            src_pb.rotation_quaternion = Euler(src_pb.rotation_euler, "XYZ").to_quaternion()
+        if tgt_pb.rotation_mode != "QUATERNION":
+            from mathutils import Euler
+
+            tgt_pb.rotation_mode = "QUATERNION"
+            tgt_pb.rotation_quaternion = Euler(tgt_pb.rotation_euler, "XYZ").to_quaternion()
+        local_pairs.append((s_name, t_name, src_pb.rotation_quaternion.copy(), tgt_pb.rotation_quaternion.copy()))
+
     scene = bpy.context.scene
     scene.render.fps = fps
     if not rig.animation_data:
@@ -731,6 +786,9 @@ def retarget_mocap(rig, mocap_path, action_name="Idle", fps=24, frames=48):
             bpy.context.view_layer.update()
             tgt_pb.keyframe_insert("location", frame=f)
             tgt_pb.keyframe_insert("rotation_quaternion" if tgt_pb.rotation_mode == "QUATERNION" else "rotation_euler", frame=f)
+        for s_name, t_name, src_rest, tgt_rest in local_pairs:
+            retarget_local_delta(rig, src, [(s_name, t_name, src_rest, tgt_rest)], f)
+        bpy.context.view_layer.update()
 
     rig.animation_data.action = None
     track = rig.animation_data.nla_tracks.new()

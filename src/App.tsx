@@ -153,6 +153,11 @@ export default function App() {
     }
     try {
       const handle = await startVoiceCall(s.name, handleCallEvent, audio)
+      // 建连接可能比用户的耐心长：这期间如果已经挂断了，就别再把它写回 live
+      if (stoppingCall.current) {
+        handle.stop()
+        return
+      }
       callRef.current = handle
       setCallState('live')
     } catch (err) {

@@ -82,6 +82,32 @@ export function createAliveRig(THREE: ThreeAny, model: ThreeAny, mixer: ThreeAny
   }
   const tmpQ = new THREE.Quaternion()
   const lookEuler = new THREE.Euler()
+  // 头部跟随要分两种情况处理，否则一定出问题：
+  //   ① 片段给这根骨写通道 → 每帧 mixer 会复位，可以把增量乘上去；
+  //   ② 片段不写通道 → 没人复位，直接 multiply 会累积（实测每秒多转 8°，头一直自己滚），
+  //      必须用「基准 × 增量」的绝对量写。
+  // 哪种情况在运行时探测：隔几百毫秒看四元数有没有被动过。
+  const headBase: Record<string, any> = {}
+  const headDriven: Record<string, boolean> = {}
+  const headProbe: Record<string, any> = {}
+  for (const [name, bone] of Object.entries(bones)) {
+    headBase[name] = bone.quaternion.clone()
+    headDriven[name] = false
+    headProbe[name] = null
+  }
+  const probeBones = (now: number) => {
+    for (const [name, bone] of Object.entries(bones)) {
+      if (headDriven[name]) continue
+      const q = bone.quaternion
+      const base = headBase[name]
+      const moved = Math.abs(q.x - base.x) + Math.abs(q.y - base.y) + Math.abs(q.z - base.z) + Math.abs(q.w - base.w) > 1e-4
+      if (headProbe[name] === null) {
+        headProbe[name] = moved ? now : 0
+      } else if (moved) {
+        headDriven[name] = true
+      }
+    }
+  }
 
   // ── 口型：优先用真实音量，拿不到分析器就退回合成包络
   let analyser: AnalyserNode | null = null
@@ -214,13 +240,23 @@ export function createAliveRig(THREE: ThreeAny, model: ThreeAny, mixer: ThreeAny
     }
 
     // 头部跟随鼠标（在动画之后叠加，不然会被 clip 覆盖）
-    const yaw = pointer.x * 0.16
-    const pitch = pointer.y * 0.10
+    const yaw = Math.max(-0.20, Math.min(0.20, pointer.x * 0.16))
+    const pitch = Math.max(-0.13, Math.min(0.13, pointer.y * 0.10))
+    if (time > 0.4) probeBones(time)
     for (const [name, bone] of Object.entries(bones)) {
       const scale = name === 'head' ? 1 : 0.45
       lookEuler.set(pitch * scale, yaw * scale * -1, 0, 'XYZ')
       tmpQ.setFromEuler(lookEuler)
-      bone.quaternion.multiply(tmpQ)
+      const base = headBase[name]
+      if (headDriven[name]) {
+        // 片段在驱动这根骨：mixer 已经写好本帧姿态，直接在它上面叠增量
+        bone.quaternion.multiply(tmpQ)
+      } else if (base) {
+        // 片段不管这根骨：写绝对量，避免累积
+        bone.quaternion.copy(base).multiply(tmpQ)
+      } else {
+        bone.quaternion.multiply(tmpQ)
+      }
     }
   }
 
