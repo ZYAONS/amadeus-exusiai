@@ -706,11 +706,6 @@ MAPS = {
     },
 }
 
-# 兼容旧名字（早先只支持 Mixamo）
-MOCAP_MAP = MAPS["mixamo"]["world"]
-MOCAP_LOCAL_MAP = MAPS["mixamo"]["local"]
-
-
 def detect_family(bones):
     names = set(bones)
     if any(n.startswith("mixamorig:") for n in names):
@@ -793,27 +788,13 @@ def retarget_local_delta(rig, src, pairs, frame):
         tgt_pb.keyframe_insert("rotation_quaternion", frame=frame)
 
 
-def switch_limbs_to_fk(rig):
-    """ARP 的 IK/FK 开关是形变骨上的 rotIK/rotFK 约束权重。
-
-    但在这份 .blend 里这条路走不通，而且**有害**：
-      - rotFK / locFK / scaleFK 的 influence 被一条变量未绑定的驱动器锁在 0，
-        手写 1.0 会在下一次求值时被改回 0（转 arm_fk.l 90°，可见骨动 0.00°）；
-      - 把 rotIK 关了以后 IK 解算被撤销，手臂从「垂在身侧」（side 0.15 / down 0.99）
-        退回作者 A-pose（side 0.70 / down 0.71）——relax_arms_to_idle 白做。
-    所以默认不再调用；保留函数只为在别的骨架上仍能显式尝试。
-    """
-    flipped = 0
-    for pb in rig.pose.bones:
-        for c in pb.constraints:
-            n = c.name.lower()
-            if "ik" in n:
-                c.influence = 0.0
-                flipped += 1
-            elif "fk" in n:
-                c.influence = 1.0
-                flipped += 1
-    return flipped
+# 关于「把手臂切到 FK」这条路（不再实现，写在这里免得下次又试一遍）：
+# 这份 .blend 里 ARP 的 rotFK / locFK / scaleFK 三个约束的 influence 被一条变量未绑定的
+# 驱动器锁在 0（文件内的 RIG-*_ui.py 被禁用，ARP 重绑那条链没跑），手写 1.0 会在下一次
+# 求值被改回去——实测把 arm_fk.l 转 90°，可见骨动 0.00°。而关掉 rotIK 更糟：IK 解算被
+# 撤销，手臂从「垂在身侧」（arm_stretch 垂度 0.99 / 侧展 0.15）退回作者 A-pose
+# （0.70 / 0.71）。网格实际蒙皮在 *arm_stretch / *forearm_twist 上、跟的是 IK 链，
+# 所以手臂只有一条通路：挪 IK 的手部目标（见 retarget_mocap 的 ik_arms）。
 
 
 def _rest_rot(ob, bone_name):
@@ -874,12 +855,12 @@ def retarget_mocap(rig, mocap_path, action_name=None, fps=24, frames=None, clip=
         rig.animation_data.action = None
     scene.frame_set(int(round(fr[0] + w0 * src_fps)))
     bpy.context.view_layer.update()
-    # 这里**不**切 FK：见 switch_limbs_to_fk 的说明——关掉 IK 会把 relax_arms_to_idle
-    # 摆好的垂手站姿退回 A-pose（side 0.70 / down 0.71），而 FK 骨根本没驱动可见骨。
+    # 这里**不**切 FK（原因见上面 switch_limbs_to_fk 那段注释）：
+    # 关掉 IK 会把 relax_arms_to_idle 摆好的垂手站姿退回 A-pose（侧展 0.70 / 垂度 0.71）。
     # 手臂链基准：把「源素材窗口起点那一帧」按世界校正搬到目标骨架上。
     # 用这个基准时 scale=1 与旧公式 target_world = corr · source_world 完全等价。
     world_pairs = []
-    for s_name, t_name, is_root in world_spec:
+    for s_name, t_name, _ in world_spec:
         if s_name not in src.pose.bones or t_name not in rig.pose.bones:
             print(f"  ! 跳过 {s_name} -> {t_name}（骨架里没有）")
             continue
