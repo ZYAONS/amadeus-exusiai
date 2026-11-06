@@ -41,7 +41,7 @@ node tools/build-exe.mjs               # 打包 + 注入 + 产物自检
 
 要发 Pages 得把仓库设为公开，或升级 Pro。所以主推 exe + Release。
 
-还有一个坑：当前这个 PAT 没有 `workflow` 权限，**推不动 `.github/workflows/` 下的文件**（`refusing to allow a Personal Access Token to create or update workflow`）。所以那两个工作流目前只在本机，要进仓库得重新签发带 `workflow` scope 的 token，或在网页 UI 里直接添加。
+还有一个坑：当前这个 PAT 没有 `workflow` 权限，**推不动 `.github/workflows/` 下的文件**（`refusing to allow a Personal Access Token to create or update workflow`）。所以那两个工作流暂存在 docs/github-workflows/ 下（不会生效），要启用得重新签发带 `workflow` scope 的 token，或在网页 UI 里直接添加。
 
 ## 先跑起来
 

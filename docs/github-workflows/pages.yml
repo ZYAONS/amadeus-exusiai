@@ -1,0 +1,57 @@
+name: pages
+
+# 把静态站点发布到 GitHub Pages。
+#
+# 能用的部分：2D 立绘舞台（立绘回源 media.prts.wiki）、官方中/日配音
+# （voiceBase 指向 torappu.prts.wiki，文件不在仓库里）、打字对话（没有 /api 时
+# 自动回落到本地人格引擎，这是 src/lib/api.ts 里写好的行为）。
+# 用不了的部分：3D 舞台（23MB 的 GLB 不在仓库里）、实时语音通话（要 Python 的
+# aiortc 服务）。这两件事 Pages 这种纯静态托管做不到。
+#
+# 前置条件：仓库的 Settings → Pages → Source 要选 "GitHub Actions"，而且
+# 免费账号的私有仓库不能发布 Pages（实测 API 直接回 422：
+# "Your current plan does not support GitHub Pages for this repository."）。
+# 所以这里**只留手动触发**：条件没满足时不会在每次 push 上留一条红色记录。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: 类型检查
+        run: npx tsc --noEmit
+      - name: 构建（项目站点要带 /<仓库名>/ 前缀）
+        run: npx vite build --base=/${{ github.event.repository.name }}/
+      - name: 页面寻址（未启用 Pages 时给出可读的报错）
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

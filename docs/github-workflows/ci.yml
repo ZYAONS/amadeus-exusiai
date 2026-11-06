@@ -1,0 +1,32 @@
+name: ci
+
+# 只做「这台机器上真能构建出来」这件事：类型检查 + 打包 + 把 dist 作为产物留下。
+# 浏览器自检（tools/check.mjs）不在这里跑：它要本机 Edge/Chrome 的固定路径、
+# 还要拉起 Python 语音服务，GitHub 的 runner 上跑不出同等结果，硬跑等于假装测过。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: 构建（tsc --noEmit && vite build）
+        run: npm run build
+      - name: 产物基本信息
+        run: |
+          du -sh dist
+          ls -la dist/assets | head -20
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+          retention-days: 14
