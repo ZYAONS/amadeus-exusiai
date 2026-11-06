@@ -2,6 +2,11 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 // 前端 1002（与参考项目一致）；/api 反代到本地 node 服务 3002
+//
+// 部署到 GitHub Pages 时站点在 /<仓库名>/ 下面，构建要带前缀：
+//   npx vite build --base=/amadeus-exusiai/
+// 这里不用 process.env 读它——本项目没装 @types/node，`tsc --noEmit` 会因为
+// "Cannot find name 'process'" 直接把构建打挂（真踩过），所以前缀走命令行参数。
 export default defineConfig({
   plugins: [react()],
   server: {

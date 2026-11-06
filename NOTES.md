@@ -7,6 +7,42 @@
 
 立绘、配音、台词、档案数据都是官方的；代码和界面是本项目写的。非官方同人作品。
 
+## 下载就能跑（单文件 exe）
+
+不想装 Node 的话，直接拿 [Release](https://github.com/ZYAONS/amadeus-exusiai/releases/latest) 里的 `amadeus-exusiai.exe`（Windows x64，89.6 MB）：双击启动，它会占一个本地端口（默认 17800，被占用自动往后找）并用默认浏览器打开。
+
+程序里**只内联前端**（`index.html` + 4 个 js/css，共 960 KB）。官方立绘、语音、3D 模型不打包进去——它们 35 MB 且著作权不是本项目的。运行时会这样退：
+
+- 立绘、语音 → 回落到 PRTS 的在线地址（`media.prts.wiki` / `torappu.prts.wiki`），能直接显示、能播
+- 3D 舞台 → 把 GLB 放进程序同目录的 `assets/model/character.glb` 就能用；没有就退回立绘
+- 对话 → 没有 LLM 代理，`/api/health` 返回 `configured: false`，前端退到本地人格引擎（这是 `src/lib/api.ts` 里本来就写好的行为）
+- 实时语音通话 → 不可用（要 Python 的 aiortc 服务），`/rtc/*` 返回 501
+
+重新构建：
+
+```bash
+npm run build                          # 先出 dist/
+node tools/build-exe.mjs               # 打包 + 注入 + 产物自检
+```
+
+`tools/build-exe.mjs` 用 Node SEA：把前端资源作为 SEA assets 一起内联，复制当前 node 当外壳，再 postject 注入 blob。**最后一步是运行产物**：`--self-test` 检查内联资源齐全且 `index.html` 里有页面标记，然后真的启动服务器抓首页、取一个内联 js、打一次 `/api/health`。任何一项不过就直接报错，不产出可发布的东西（`--self-test` 第一行打印的必须是本程序版本号——如果打印的是 Node 版本号，说明注入失败）。
+
+两个 Node SEA 的坑：入口必须能被当 CJS 加载（`desktop/main.cjs` 是零依赖纯 CJS）；**`getAsset(name, "buffer")` 在 Node 24 上直接抛 `ERR_ENCODING_NOT_SUPPORTED`**，二进制要用 `getRawAsset`。
+
+发版：`npm run release`（`tools/release-exe.py` 按 `git credential fill` 现取 token，建 tag/release 并上传 exe + `SHA256SUMS.txt`）。产物不进仓库（`build/`、`*.exe`、`*.blob` 都在 `.gitignore` 里）。
+
+## GitHub Pages 发不了（实测）
+
+静态站本身能构建（`npx tsc --noEmit && npx vite build --base=/<仓库名>/`，前缀不能省），`.github/workflows/pages.yml` 也写好了。但**私有仓库 + 免费账号不能发布 Pages**，API 直接回：
+
+```
+422 Your current plan does not support GitHub Pages for this repository.
+```
+
+要发 Pages 得把仓库设为公开，或升级 Pro。所以主推 exe + Release。
+
+还有一个坑：当前这个 PAT 没有 `workflow` 权限，**推不动 `.github/workflows/` 下的文件**（`refusing to allow a Personal Access Token to create or update workflow`）。所以那两个工作流目前只在本机，要进仓库得重新签发带 `workflow` scope 的 token，或在网页 UI 里直接添加。
+
 ## 先跑起来
 
 ```bash

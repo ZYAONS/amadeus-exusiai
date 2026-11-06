@@ -1,4 +1,4 @@
-﻿node_modules/
+node_modules/
 dist/
 .env
 .env.local
@@ -18,3 +18,9 @@ _ref/
 mod/
 *.blend
 *.glb
+
+# 单文件可执行程序：中间产物和 90MB 的产物都不进仓库，产物走 GitHub Release
+build/
+*.exe
+*.blob
+
