@@ -59,6 +59,16 @@ def parse_args():
     mocap_arms_ik = 0.0
     if "--mocap-arms-ik" in rest:
         mocap_arms_ik = float(rest[rest.index("--mocap-arms-ik") + 1])
+    # 手指动作可以从另一份素材来（CMU 没有手指细节，Soldier 有）
+    mocap_fingers = None
+    if "--mocap-fingers" in rest:
+        mocap_fingers = rest[rest.index("--mocap-fingers") + 1]
+    mocap_fingers_scale = 1.0
+    if "--mocap-fingers-scale" in rest:
+        mocap_fingers_scale = float(rest[rest.index("--mocap-fingers-scale") + 1])
+    mocap_fingers_action = None
+    if "--mocap-fingers-action" in rest:
+        mocap_fingers_action = rest[rest.index("--mocap-fingers-action") + 1]
     # 默认把手放下来（台上要的是站姿，不是 A-pose）；要原始姿势加 --no-pose
     pose = not ("--no-pose" in rest)
     inward, down = 0.24, 0.24
@@ -67,7 +77,8 @@ def parse_args():
         inward, down = (float(v) for v in rest[i + 1].split(","))
     return (out, max_tex, face_tex, ("--skins" in rest or animate), animate, alive, pose,
             inward, down, mocap, mocap_action, mocap_frames, mocap_clip,
-            mocap_window, mocap_scale, mocap_smooth, mocap_loop, mocap_arms_ik)
+            mocap_window, mocap_scale, mocap_smooth, mocap_loop, mocap_arms_ik,
+            mocap_fingers, mocap_fingers_scale, mocap_fingers_action)
 
 
 def collect_tex_images(tree, seen=None):
@@ -133,6 +144,79 @@ def base_color_is_direct_image(mat):
     if not sock.is_linked:
         return True
     return all(l.from_node.type == "TEX_IMAGE" for l in sock.links)
+
+
+def tune_iris_saturation(image, sat_gain=1.55, value_gain=0.96,
+                         hue_lo=15.0, hue_hi=65.0, sat_min=0.20):
+    """把眼睛贴图上「琥珀色且够饱和」的像素按官图拉饱和（脸/眼白/高光都不碰）。
+
+    为什么要动：把官图的脸裁出来量，虹膜最饱和处是 #BE5000、中调 #CC7A43；
+    同一个度量用在渲染特写上，中调是 #CC9F68——不是不够亮，是混了太多白、偏黄。
+    所以做的是「离亮度拉开」的饱和度增益 + 轻微压明度，而不是整体调色。
+    返回 (改前统计, 改后统计)，没有命中像素时返回 (None, None)。
+    """
+    import numpy as np
+
+    w, h = image.size
+    if not w or not h:
+        return None, None
+    n = w * h
+    px = np.empty(n * 4, dtype=np.float32)
+    image.pixels.foreach_get(px)
+    px = px.reshape(-1, 4)
+    lin = px[:, :3].copy()
+    srgb = np.where(lin <= 0.0031308, lin * 12.92,
+                    1.055 * np.power(np.maximum(lin, 0), 1 / 2.4) - 0.055)
+    srgb = np.clip(srgb, 0, 1)
+
+    def hsv_stats(rgb):
+        mx, mn = rgb.max(axis=1), rgb.min(axis=1)
+        d = mx - mn
+        hue = np.zeros(n, dtype=np.float32)
+        m = d > 1e-6
+        r, g, b = rgb[:, 0], rgb[:, 1], rgb[:, 2]
+        i = m & (mx == r)
+        hue[i] = ((g[i] - b[i]) / d[i]) % 6
+        i = m & (mx == g)
+        hue[i] = (b[i] - r[i]) / d[i] + 2
+        i = m & (mx == b)
+        hue[i] = (r[i] - g[i]) / d[i] + 4
+        hue *= 60
+        sat = np.where(mx > 1e-6, d / np.maximum(mx, 1e-6), 0)
+        return hue, sat, mx
+
+    hue, sat, val = hsv_stats(srgb)
+    mask = (hue >= hue_lo) & (hue <= hue_hi) & (sat >= sat_min)
+    count = int(mask.sum())
+    if count < 50:
+        return None, None
+
+    def summary(rgb):
+        picked = rgb[mask]
+        order = np.argsort(sat[mask])
+        mid = picked[order[int(len(order) * 0.45):int(len(order) * 0.75)]].mean(0)
+        _, s_now, _ = hsv_stats(rgb)
+        return {
+            "n": count,
+            "s": float(s_now[mask].mean()),
+            "mid": "#{:02X}{:02X}{:02X}".format(*(int(round(x * 255)) for x in mid)),
+        }
+
+    before = summary(srgb)
+
+    # 饱和度增益：每个通道相对亮度的偏离被放大（这就是「去白」）
+    lum = (0.2126 * srgb[:, 0] + 0.7152 * srgb[:, 1] + 0.0722 * srgb[:, 2])[:, None]
+    boosted = np.clip(lum + (srgb - lum) * sat_gain, 0, 1) * value_gain
+    srgb[mask] = boosted[mask]
+
+    after = summary(srgb)
+
+    # sRGB → 线性，写回
+    back = np.where(srgb <= 0.04045, srgb / 12.92, ((srgb + 0.055) / 1.055) ** 2.4)
+    px[:, :3] = back.astype(np.float32)
+    image.pixels.foreach_set(px.reshape(-1))
+    image.update()
+    return before, after
 
 
 def flatten_toon_materials(verbose=True):
@@ -801,6 +885,180 @@ def _rest_rot(ob, bone_name):
     return (ob.matrix_world @ ob.data.bones[bone_name].matrix_local).to_quaternion()
 
 
+# ───────────────────────── 手指重定向 ─────────────────────────
+FINGER_MAP = {
+    "fingers": ("index", "middle", "ring", "pinky"),
+    "thumb": ("thumb",),
+    "shapes": {"index": "Index", "middle": "Middle", "ring": "Ring", "pinky": "Pinky", "thumb": "Thumb"},
+    "sides": {".l": "Left", ".r": "Right"},
+}
+
+
+def plan_finger_chains(src, rig):
+    """源骨架手指链 → 目标变形骨。
+
+    目标是**变形骨**（{指}1.{侧} / c_{指}2.{侧} / c_{指}3.{侧}），不是带 _rot 的控制骨：
+    控制骨既受约束覆盖（c_index2_rot.l 挂着 COPY_ROTATION 且影响 1.0），
+    又因为 export_def_bones=True 根本不会被导出。变形骨才是既有权重又在 GLB 里的那层
+    （实测权重和：index1.l 260 / c_index2.l 114.7 / c_index3.l 175.1）。
+    """
+    chains = []
+    for side, src_side in FINGER_MAP["sides"].items():
+        for finger in FINGER_MAP["fingers"] + FINGER_MAP["thumb"]:
+            shape = FINGER_MAP["shapes"][finger]
+            # glTF 导入后每指只剩有蒙皮权重的节（多为 3 节，左手 Pinky/Thumb 只有 2 节）
+            src_names = [n for n in (f"mixamorig:{src_side}Hand{shape}{i}" for i in (1, 2, 3, 4))
+                         if n in src.pose.bones]
+            tgt_names = [f"{finger}1{side}", f"c_{finger}2{side}", f"c_{finger}3{side}"]
+            if not src_names or any(t not in rig.pose.bones for t in tgt_names):
+                continue
+            chains.append((src_names, tgt_names))
+    return chains
+
+
+def apply_finger_motion(rig, body_action, finger_path, action_name, frames, fps=24, scale=1.0, verbose=True):
+    """把另一份开源素材的手指动作搬到 rig 上。
+
+    身体那段 idle 来自 CMU 的 BVH（CMU 只有三个粗略手指骨），手指细节取自
+    three.js 那份 Mixamo 的 Soldier.glb——它的 Idle 里逐关节弯曲是真数据
+    （实测食指 8°+16°、中指 17°+22°、无名指 34°+32°、小指 39°+40°、拇指 11°），
+    正是「放松的手」，比手编一个握拳姿势靠谱。
+
+    搬法两步，都是量出来的：
+      1. 源每个关节相对父级转了多少度（手指是铰链，角度是标量）；
+      2. 目标的弯曲轴实测是父级局部 Z 的世界方向——绕 c_index1_rot.l 的局部 Z 转 −20°，
+         指尖位移 0.0208 里有 0.0198 沿掌法线朝掌心，绕 Y 几乎不动（那是扭转轴）。
+         把它换算到每个骨自己的局部空间，之后每帧设**绝对** basis 旋转（不叠，否则会累积）。
+    """
+    if scale <= 0:
+        return 0
+    # retarget_mocap 结束时 action 被卸下、塞进了静音的 NLA 轨；这里必须临时挂回去，
+    # 否则 keyframe_insert 会新建一个空 action，手指的关键帧进不了导出的片段。
+    if not rig.animation_data:
+        rig.animation_data_create()
+    rig.animation_data.action = body_action
+    try:
+        return _apply_finger_motion_inner(rig, finger_path, action_name, frames, fps, scale, verbose)
+    finally:
+        rig.animation_data.action = None
+
+
+def _apply_finger_motion_inner(rig, finger_path, action_name, frames, fps=24, scale=1.0, verbose=True):
+    src2, src2_fps, note2 = import_motion_source(finger_path)
+    act2 = None
+    if action_name:
+        act2 = next((a for a in bpy.data.actions if a.name.startswith(action_name)), None)
+    if act2 is None and src2.animation_data and src2.animation_data.action:
+        act2 = src2.animation_data.action
+    if act2 is None:
+        print("[finger] 手指素材里没有动作，跳过")
+        return 0
+    # glTF 导入会生成多个 action（Idle_Character / Idle_<某骨> / Walk_Character …），
+    # 必须显式挂上选中的那个，否则采样到的是别的动作。
+    if not src2.animation_data:
+        src2.animation_data_create()
+    src2.animation_data.action = act2
+
+    chains = plan_finger_chains(src2, rig)
+    if not chains:
+        print("[finger] 两侧骨架对不上手指链，跳过")
+        return 0
+
+    def _world_delta(name):
+        q_now = (src2.matrix_world @ src2.pose.bones[name].matrix).to_quaternion()
+        return q_now @ _rest_rot(src2, name).inverted()
+
+    def _flex(child, parent):
+        d = _world_delta(parent).inverted() @ _world_delta(child)
+        a = d.angle
+        if a > math.pi:
+            a = 2.0 * math.pi - a
+        return math.degrees(a)
+
+    # 目标第 k 节 ← 源第 k 节；源比目标多出来的节并到最后一个关节（角度相加）
+    plan = []
+    for src_names, tgt_names in chains:
+        hand = None
+        for side, src_side in FINGER_MAP["sides"].items():
+            if src_names[0].startswith(f"mixamorig:{src_side}Hand"):
+                hand = f"mixamorig:{src_side}Hand"
+        for k, tgt in enumerate(tgt_names):
+            if k < len(src_names):
+                parent = hand if k == 0 else src_names[k - 1]
+                plan.append((tgt, [(src_names[k], parent)]))
+        if len(src_names) > len(tgt_names):
+            extra = [(n, src_names[i - 1] if i > 0 else hand)
+                     for i, n in enumerate(src_names) if i >= len(tgt_names)]
+            plan.append((tgt_names[-1], extra))
+
+    fr2 = act2.frame_range
+    src_span = max(1e-6, (fr2[1] - fr2[0]) / float(src2_fps))
+
+    # ── 采样每个目标关节每帧的弯曲角
+    samples = []
+    for f in range(frames):
+        t_sec = (f / float(fps)) % src_span
+        bpy.context.scene.frame_set(int(round(fr2[0] + t_sec * src2_fps)))
+        bpy.context.view_layer.update()
+        row = {}
+        for tgt, pairs in plan:
+            flex = sum(_flex(c, p) for c, p in pairs if c in src2.pose.bones and p in src2.pose.bones)
+            row[tgt] = row.get(tgt, 0.0) + math.radians(flex * scale)
+        samples.append(row)
+
+    # ── 施加：每根骨在静止姿势下算一次局部弯曲轴，之后每帧设绝对 basis 旋转
+    scene = bpy.context.scene
+    scene.frame_set(1)
+    bpy.context.view_layer.update()
+    local_axis = {}
+    for tgt in samples[0]:
+        pb = rig.pose.bones.get(tgt)
+        if pb is None or pb.parent is None:
+            continue
+        axis_w = (pb.parent.matrix.to_3x3() @ Vector((0.0, 0.0, 1.0))).normalized()
+        local_axis[tgt] = (pb.matrix.to_3x3().inverted() @ axis_w).normalized()
+
+    for f in range(frames):
+        scene.frame_set(f + 1)
+        bpy.context.view_layer.update()
+        for tgt, angle in samples[f].items():
+            pb = rig.pose.bones.get(tgt)
+            if pb is None or tgt not in local_axis:
+                continue
+            q = Quaternion(local_axis[tgt], -angle)
+            if pb.rotation_mode == "QUATERNION":
+                pb.rotation_quaternion = q
+                pb.keyframe_insert("rotation_quaternion", frame=f + 1)
+            else:
+                pb.rotation_euler = q.to_euler(pb.rotation_mode)
+                pb.keyframe_insert("rotation_euler", frame=f + 1)
+
+    # ── 量化：指尖到指根的距离，**跟未弯曲的基准比**（只打区间会骗人：
+    #    手指全程保持一个弯曲时区间几乎不变，但绝对值已经变了）
+    def pt(n):
+        return (rig.matrix_world @ rig.pose.bones[n].matrix).translation
+
+    pairs2 = [(f"c_{f}3.l", f"c_{f}1_base.l") for f in ("index", "middle", "ring", "pinky", "thumb")]
+    pairs2 = [(a, b) for a, b in pairs2 if a in rig.pose.bones and b in rig.pose.bones]
+    rest_len = {}
+    for a, b in pairs2:
+        rest_len[a] = (pt(a) - pt(b)).length
+    got = {a: [] for a, _ in pairs2}
+    for f in range(1, frames + 1):
+        scene.frame_set(f)
+        bpy.context.view_layer.update()
+        for a, b in pairs2:
+            got[a].append((pt(a) - pt(b)).length)
+    if verbose:
+        print(f"[finger] 源：{note2} / 动作 {act2.name!r} / {len(chains)} 条链 / 系数 {scale:g} / "
+              f"源片段 {src_span:.2f}s 循环铺满 {frames} 帧")
+        for a, v in got.items():
+            print(f"[finger]   {a:14s} 到指根 {min(v)*1000:.1f}~{max(v)*1000:.1f}mm"
+                  f"（未弯曲基准 {rest_len[a]*1000:.1f}mm，缩短 {(rest_len[a]-min(v))*1000:.1f}mm）")
+    return len(chains)
+
+
+
 def retarget_mocap(rig, mocap_path, action_name=None, fps=24, frames=None, clip="idle",
                    window=None, scale=1.0, smooth=0.0, loop_blend=0.0, arms_ik=0.0):
     """
@@ -1098,7 +1356,8 @@ def bind_accessories_to_body(meshes, rig):
 def main():
     (out, max_tex, face_tex, with_skins, animate, alive, do_pose,
      inward, down, mocap, mocap_action, mocap_frames, mocap_clip, \
-        mocap_window, mocap_scale, mocap_smooth, mocap_loop, mocap_arms_ik) = parse_args()
+        mocap_window, mocap_scale, mocap_smooth, mocap_loop, mocap_arms_ik, \
+        mocap_fingers, mocap_fingers_scale, mocap_fingers_action) = parse_args()
     if not out:
         raise SystemExit("缺少输出路径：blender -b 文件.blend --python tools/blender-export-glb.py -- 输出.glb")
     out = os.path.abspath(out)
@@ -1169,6 +1428,19 @@ def main():
 
     print(f"[export] 选中 {len(picked)} 个对象，降采样 {scaled} 张贴图到 ≤{max_tex}px")
 
+    # 2.5 虹膜按官图校准：官图那只眼睛的最饱和处是 #BE5000（很深的暖橙），
+    #     而渲染出来的中调是 #CC9F68（混了太多白、偏黄），差的不是亮度是饱和度。
+    #     只动眼睛那张贴图上「琥珀色且够饱和」的像素，脸/眼白/高光都不碰。
+    for img_name in ("eyes",):
+        img = bpy.data.images.get(img_name)
+        if img is None:
+            continue
+        before, after = tune_iris_saturation(img)
+        if before:
+            print(f"[iris] {img_name}: 琥珀像素 {before['n']} 个，"
+                  f"饱和度 {before['s']:.2f}→{after['s']:.2f}，"
+                  f"中调 {before['mid']}→{after['mid']}")
+
     flattened = flatten_toon_materials()
     print(f"[export] 压平 {len(flattened)} 个 toon 材质：")
     for line in flattened:
@@ -1192,10 +1464,14 @@ def main():
                 for line in prepared:
                     print("   -", line)
             if mocap:
-                retarget_mocap(bpy.data.objects["rig"], mocap, mocap_action,
-                              frames=mocap_frames, clip=mocap_clip, window=mocap_window,
-                              scale=mocap_scale, smooth=mocap_smooth, loop_blend=mocap_loop,
-                              arms_ik=mocap_arms_ik)
+                made = retarget_mocap(bpy.data.objects["rig"], mocap, mocap_action,
+                                      frames=mocap_frames, clip=mocap_clip, window=mocap_window,
+                                      scale=mocap_scale, smooth=mocap_smooth, loop_blend=mocap_loop,
+                                      arms_ik=mocap_arms_ik)
+                if mocap_fingers and made:
+                    apply_finger_motion(bpy.data.objects["rig"], made, mocap_fingers,
+                                        mocap_fingers_action, int(made.frame_range[1]), fps=24,
+                                        scale=mocap_fingers_scale)
             else:
                 clips = author_alive_clips(bpy.data.objects["rig"])
                 print("[alive] 编好的动作（没有给 --mocap，用的是内置手编循环）：")
