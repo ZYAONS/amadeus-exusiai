@@ -24,3 +24,9 @@ build/
 *.exe
 *.blob
 
+# 音色克隆：参考音是从官方配音里剪的（不入库），模型 1.8 GB，venv 里有 torch
+service/clone/.venv/
+service/clone/models/
+service/clone/ref/
+
+

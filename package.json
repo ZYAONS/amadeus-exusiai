@@ -17,7 +17,9 @@
     "voice:setup": "python -m venv service/webrtc/.venv && service/webrtc/.venv/Scripts/python.exe -m pip install -r service/webrtc/requirements.txt",
     "voice:fixture": "service/webrtc/.venv/Scripts/python.exe service/webrtc/make_fixture.py",
     "exe": "node tools/build-exe.mjs",
-    "release": "python tools/release-exe.py"
+    "release": "python tools/release-exe.py",
+    "voice:clone": "node tools/run-clone.mjs",
+    "voice:ref": "service/webrtc/.venv/Scripts/python.exe tools/make-voice-ref.py"
   },
   "dependencies": {
     "lucide-react": "^0.469.0",

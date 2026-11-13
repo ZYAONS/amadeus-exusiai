@@ -69,7 +69,8 @@ let voiceSelfTest = null
 if (fixtureReady) {
   const selfOut = await new Promise((res) => {
     const py = spawn(voicePython, [join(root, 'service/webrtc/selftest.py')], {
-      env: { ...process.env, HF_HOME: join(root, '_ref/hf'), PYTHONIOENCODING: 'utf-8' },
+      // 同上：自检固定用快的引擎，克隆那条单独验（见 NOTES 的「音色克隆」一节）
+      env: { ...process.env, CLONE_TTS: '0', HF_HOME: join(root, '_ref/hf'), PYTHONIOENCODING: 'utf-8' },
     })
     let out = ''
     py.stdout.on('data', (b) => (out += String(b)))
@@ -179,6 +180,10 @@ try {
       ...process.env,
       WEBRTC_PORT: '8001',
       HF_HOME: join(root, '_ref/hf'),
+      // 自检不接本地克隆服务：它要 GPU、单句 2~3 秒（和 Whisper 抢卡时会到 14 秒），
+      // 会把浏览器那两侧有时间窗的断言拖到超时。克隆这条链路由 selftest.py 单独验证
+      // （起 clone 服务后跑，会把 tts 报成 clone）；自检这里固定用快的 edge-tts。
+      CLONE_TTS: '0',
       // 有真素材就用真 ASR/TTS；没有才退回 stub
       ...(fixtureReady ? {} : { AMADEUS_FORCE_STUB: '1' }),
       VAD_RMS: '600',

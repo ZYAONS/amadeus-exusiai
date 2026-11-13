@@ -2,11 +2,13 @@
 语音合成（TTS）。
 
 按可用性依次回落，/health 如实报当前档位：
-  1. SiliconFlow（配了 SILICONFLOW_API_KEY，可用自定义音色）
-  2. 本地 edge-tts（不需要 key，微软在线语音，中文音色自然）
-  3. stub：本地生成一段短提示音
+  1. clone：本地音色克隆服务（service/clone/server.py，XTTS-v2 + 官方录音当参考音）
+     —— 这条才是「她的音色」；参考音就是官方配音里的一段，零样本，不需要训练
+  2. SiliconFlow（配了 SILICONFLOW_API_KEY，可用自定义音色）
+  3. 本地 edge-tts（不需要 key，微软在线语音；注意这里是通用音色，不是她）
+  4. stub：本地生成一段短提示音
 
-自检走第 2 档——所以「她的回复真的被念出来、并且经 WebRTC 传回浏览器播放」是真验证过的。
+自检走第 3 档——所以「她的回复真的被念出来、并且经 WebRTC 传回浏览器播放」是真验证过的。
 """
 
 import asyncio
@@ -14,6 +16,7 @@ import io
 import math
 import os
 import struct
+import time
 import wave
 
 import httpx
@@ -24,6 +27,35 @@ SILICONFLOW_VOICE = os.getenv("SILICONFLOW_VOICE", "")
 TTS_MODEL = os.getenv("SILICONFLOW_TTS_MODEL", "FunAudioLLM/CosyVoice2-0.5B")
 EDGE_VOICE = os.getenv("EDGE_TTS_VOICE", "zh-CN-XiaoxiaoNeural")
 FORCE_STUB = os.getenv("AMADEUS_FORCE_STUB", "") == "1"
+
+# 本地克隆服务跑在另一个 venv 里（要 torch），所以这边只走 HTTP，不把 torch 拖进语音服务。
+# CLONE_TTS=0 显式关掉；探测结果缓存 30 秒，避免每次合成都探一次。
+CLONE_URL = os.getenv("CLONE_TTS_URL", "http://127.0.0.1:8100").rstrip("/")
+CLONE_DISABLED = os.getenv("CLONE_TTS", "1") == "0"
+_clone_probe = {"ok": None, "at": 0.0}
+
+
+def _clone_available() -> bool:
+    if CLONE_DISABLED:
+        return False
+    now = time.time()
+    if _clone_probe["ok"] is not None and now - _clone_probe["at"] < 30.0:
+        return bool(_clone_probe["ok"])
+    try:
+        res = httpx.get(f"{CLONE_URL}/health", timeout=1.5)
+        ok = res.status_code == 200 and bool(res.json().get("ok"))
+    except Exception:  # noqa: BLE001  没起服务就当没有
+        ok = False
+    _clone_probe["ok"] = ok
+    _clone_probe["at"] = now
+    return ok
+
+
+def _clone_synth(text: str, lang: str = "zh") -> bytes:
+    with httpx.Client(timeout=120) as client:
+        res = client.post(f"{CLONE_URL}/tts", json={"text": text[:400], "lang": lang})
+        res.raise_for_status()
+        return res.content
 
 
 def _edge_available() -> bool:
@@ -38,6 +70,8 @@ def _edge_available() -> bool:
 def mode() -> str:
     if FORCE_STUB:
         return "stub"
+    if _clone_available():
+        return "clone"
     if SILICONFLOW_API_KEY:
         return "siliconflow"
     if _edge_available():
@@ -46,7 +80,13 @@ def mode() -> str:
 
 
 def detail() -> dict:
-    return {"mode": mode(), "edge_voice": EDGE_VOICE, "siliconflow_configured": bool(SILICONFLOW_API_KEY)}
+    return {
+        "mode": mode(),
+        "edge_voice": EDGE_VOICE,
+        "siliconflow_configured": bool(SILICONFLOW_API_KEY),
+        "clone_url": CLONE_URL,
+        "clone_disabled": CLONE_DISABLED,
+    }
 
 
 def _stub_wav(text: str, sample_rate: int = 24000) -> bytes:
@@ -82,9 +122,17 @@ def _edge_synth(text: str) -> bytes:
     return asyncio.run(run())
 
 
-def synthesize(text: str) -> bytes:
+def synthesize(text: str, lang: str = "zh") -> bytes:
     """文本 → 音频字节（mp3/wav 均可，pipeline 统一解码成 48k PCM）"""
     kind = mode()
+
+    if kind == "clone" and text.strip():
+        try:
+            return _clone_synth(text, lang)
+        except Exception:  # noqa: BLE001  克隆服务挂了就往下退，别把整轮对话打断
+            _clone_probe["ok"] = False
+            _clone_probe["at"] = time.time()
+            kind = mode()
 
     if kind == "siliconflow" and text.strip():
         payload = {
