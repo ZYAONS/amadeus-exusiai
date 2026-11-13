@@ -2,10 +2,16 @@ export type Health = { configured: boolean; model: string | null; persona: strin
 
 export type ChatMessage = { role: 'user' | 'assistant'; content: string }
 
+// 接口地址要跟着 base 走：部署到 GitHub Pages 的项目站点时页面在 /<仓库名>/ 下，
+// 写死 '/api/health' 会打到域名根、落到 GitHub 的 404 页（实测线上就是这么报的）。
+// 用 BASE_URL 拼出来，本地是 /api/health（Vite 反代到 3002），
+// 静态部署则命中 docs/api/health 那份「未配置」应答。
+const API_BASE = import.meta.env.BASE_URL || '/'
+
 /** 探测本地服务是否配好了模型；没起来或没配 key 都算「本地人格模式」 */
 export async function fetchHealth(): Promise<Health> {
   try {
-    const res = await fetch('/api/health')
+    const res = await fetch(`${API_BASE}api/health`)
     if (!res.ok) throw new Error(String(res.status))
     return (await res.json()) as Health
   } catch {
@@ -17,7 +23,7 @@ export async function fetchHealth(): Promise<Health> {
 export class OfflineError extends Error {}
 
 export async function* chatStream(messages: ChatMessage[], userName: string): AsyncGenerator<string> {
-  const res = await fetch('/api/chat', {
+  const res = await fetch(`${API_BASE}api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ messages, user: userName }),
