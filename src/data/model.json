@@ -4,6 +4,5 @@
   "bytes": 23998292,
   "source": "fin12.glb",
   "addedAt": "2026-11-06T06:04:53.634Z",
-  "remote": "https://raw.githubusercontent.com/ZYAONS/amadeus-assets/main/character.glb",
-  "note": "模型著作权归原作者所有，请遵守原发布页的使用条款；本仓库不收录模型文件。remote 是在线托管地址（独立素材仓库，raw 域名带 CORS 头，Release 资产没有），本地 public/assets/model/ 下有文件时优先用本地。舞台上的归一化与取景都在运行时按实际包围盒算，所以这里不记尺寸。"
+  "note": "模型著作权归原作者所有，请遵守原发布页的使用条款；本仓库、以及本项目的任何在线托管都不收录模型文件。file 只用于本机（public/assets/model/ 下有文件时直接加载）与单文件 exe；托管站由访问者在「终端设置 → 载入本地模型」里自选 GLB，走 blob URL。舞台上的归一化与取景都在运行时按实际包围盒算，所以这里不记尺寸。"
 }

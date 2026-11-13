@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Stage from './components/Stage'
 import ModelStage from './components/ModelStage'
 import Hud from './components/Hud'
@@ -59,17 +59,28 @@ export default function App() {
     return Boolean(w.SpeechRecognition || w.webkitSpeechRecognition)
   }, [])
 
-  // 模型地址：本机（dev / 单文件 exe）用 public/assets/model/ 下的本地文件，
-  // 托管站用素材仓库的在线地址（raw.githubusercontent.com 带 CORS 头；
-  // GitHub Release 资产没有这个头，跨域加载 GLB 会被浏览器拦掉）。
-  // 两个地址互为兜底：谁先用由 hasLocalAssets 决定，失败时换另一个再试。
+  // 模型地址：本机（dev / 单文件 exe）用 public/assets/model/ 下的本地文件；
+  // 托管站没有本地文件，也不从任何仓库拉（模型著作权不属于本项目，不随站点分发），
+  // 由访问者在「终端设置 → 载入本地模型」里自己选一份 GLB，这里接 blob URL。
   const localModelUrl = MODEL.file ? `/assets/model/${MODEL.file}` : null
-  const [modelSrc, setModelSrc] = useState<string | null>(() => {
-    const a = hasLocalAssets ? localModelUrl : (MODEL.remote ?? localModelUrl)
-    return a ?? null
-  })
+  const [modelSrc, setModelSrc] = useState<string | null>(() =>
+    hasLocalAssets ? (localModelUrl ?? MODEL.remote ?? null) : (MODEL.remote ?? null)
+  )
   const modelUrl = modelSrc
   const use3d = Boolean(modelUrl) && !modelFailed && s.config.stage === '3d'
+
+  /** 访问者选了自己的 GLB：用 blob URL 直接喂给 3D 舞台，站点不托管模型 */
+  const pickModel = useCallback(
+    (file: File) => {
+      setModelSrc((old) => {
+        if (old && old.startsWith('blob:')) URL.revokeObjectURL(old)
+        return URL.createObjectURL(file)
+      })
+      setModelFailed(null)
+      s.setConfig({ stage: '3d' })
+    },
+    [s]
+  )
 
   // 官方语音播放器的说话状态，直接读真实媒体事件
   useEffect(() => {
@@ -528,6 +539,7 @@ export default function App() {
         name={s.name}
         hasModel={Boolean(modelUrl) && !modelFailed}
         onConfig={s.setConfig}
+        onPickModel={pickModel}
         onResetVoice={resetVoiceCache}
         onClearHistory={s.clearHistory}
         onSignOut={() => {

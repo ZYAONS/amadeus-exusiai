@@ -12,6 +12,7 @@ type Props = {
   name: string
   hasModel: boolean
   onConfig: (patch: Partial<Config>) => void
+  onPickModel: (file: File) => void
   onResetVoice: () => void
   onClearHistory: () => void
   onSignOut: () => void
@@ -68,6 +69,7 @@ export default function ConfigPanel({
   name,
   hasModel,
   onConfig,
+  onPickModel,
   onResetVoice,
   onClearHistory,
   onSignOut,
@@ -104,10 +106,30 @@ export default function ConfigPanel({
               <option value="2d">官方立绘</option>
             </select>
           </Row>
+          <Row label="载入本地模型">
+            <label
+              className="cursor-pointer border border-[var(--po-line)] bg-[var(--po-card-2)] px-2 py-1 font-hud text-[11px] hover:border-[var(--po-crimson)]"
+              aria-label="载入本地模型"
+            >
+              选择 GLB…
+              <input
+                type="file"
+                accept=".glb,.vrm,model/gltf-binary"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0]
+                  if (f) onPickModel(f)
+                  e.currentTarget.value = ''
+                }}
+              />
+            </label>
+          </Row>
           {!hasModel && (
             <p className="mt-1 border-l-2 border-[var(--po-line)] pl-2 text-[11px] leading-relaxed text-[var(--po-muted)]">
-              没检测到模型文件。把 .glb 放进 <span className="text-[var(--po-halo)]">public/assets/model/</span>，
-              或跑 <span className="text-[var(--po-halo)]">node tools/fetch-model.mjs 你的文件.glb</span>。
+              本仓库不收模型文件（著作权不属于本项目）。用「选择 GLB…」把你自己那份载进来即可上 3D；
+              本机开发时也可以把文件放进
+              <span className="text-[var(--po-halo)]"> public/assets/model/</span> 或跑
+              <span className="text-[var(--po-halo)]"> node tools/fetch-model.mjs 你的文件.glb</span>。
             </p>
           )}
           <Row label="配音与台词语言">
