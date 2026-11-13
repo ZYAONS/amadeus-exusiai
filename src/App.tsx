@@ -18,7 +18,7 @@ import { unlockedLines } from './lib/trust'
 import { startVoiceCall, type CallEvent, type CallHandle } from './lib/rtc'
 import modelRecord from './data/model.json'
 
-const MODEL = modelRecord as { file: string | null; demo?: boolean }
+const MODEL = modelRecord as { file: string | null; demo?: boolean; remote?: string }
 import { playOfficial, resetVoiceCache, speak, stopOfficial, stopSpeaking } from './lib/audio'
 
 type SheetKind = 'history' | 'voices' | 'config' | null
@@ -59,7 +59,12 @@ export default function App() {
     return Boolean(w.SpeechRecognition || w.webkitSpeechRecognition)
   }, [])
 
-  const modelUrl = MODEL.file ? `/assets/model/${MODEL.file}` : null
+  // 模型地址：先本地（public/assets/model/，开发与 exe 都用它），
+  // 本地没有就走素材仓库的在线地址（raw.githubusercontent.com 带 CORS 头，
+  // Release 资产没有这个头，跨域加载 GLB 会被浏览器拦掉）。
+  const localModelUrl = MODEL.file ? `/assets/model/${MODEL.file}` : null
+  const [modelSrc, setModelSrc] = useState<string | null>(localModelUrl ?? MODEL.remote ?? null)
+  const modelUrl = modelSrc
   const use3d = Boolean(modelUrl) && !modelFailed && s.config.stage === '3d'
 
   // 官方语音播放器的说话状态，直接读真实媒体事件
@@ -384,6 +389,12 @@ export default function App() {
             speaking={speaking}
             onTap={tapStage}
             onFail={(reason) => {
+              // 本地没有模型时，先用在线地址再试一次；两边都不行才退回立绘
+              if (MODEL.remote && modelSrc !== MODEL.remote) {
+                console.warn('[3d] 本地模型不可用，改用在线素材：', reason)
+                setModelSrc(MODEL.remote)
+                return
+              }
               console.warn('[3d] 模型加载失败，退回立绘：', reason)
               setModelFailed(reason)
             }}
