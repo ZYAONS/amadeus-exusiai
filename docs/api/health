@@ -1,0 +1,1 @@
+{"configured":false,"model":null,"persona":"新约能天使","note":"这是 GitHub Pages 上的静态部署：没有 LLM 代理，也没有 WebRTC 语音服务。前端读到 configured=false 就走本地人格引擎；要真模型请在本地 npm run dev:api。"}
