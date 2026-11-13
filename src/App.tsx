@@ -13,7 +13,7 @@ import { useStore } from './lib/store'
 import { chatStream, OfflineError, type ChatMessage } from './lib/api'
 import { classifyEmotion, type Emotion } from './lib/emotion'
 import { offlineReply } from './lib/offlinePersona'
-import { IDLE_POOL, LINES, TOUCH_POOL, lineText, type VoiceLang, type VoiceLine } from './lib/operator'
+import { IDLE_POOL, LINES, TOUCH_POOL, hasLocalAssets, lineText, type VoiceLang, type VoiceLine } from './lib/operator'
 import { unlockedLines } from './lib/trust'
 import { startVoiceCall, type CallEvent, type CallHandle } from './lib/rtc'
 import modelRecord from './data/model.json'
@@ -59,11 +59,15 @@ export default function App() {
     return Boolean(w.SpeechRecognition || w.webkitSpeechRecognition)
   }, [])
 
-  // 模型地址：先本地（public/assets/model/，开发与 exe 都用它），
-  // 本地没有就走素材仓库的在线地址（raw.githubusercontent.com 带 CORS 头，
-  // Release 资产没有这个头，跨域加载 GLB 会被浏览器拦掉）。
+  // 模型地址：本机（dev / 单文件 exe）用 public/assets/model/ 下的本地文件，
+  // 托管站用素材仓库的在线地址（raw.githubusercontent.com 带 CORS 头；
+  // GitHub Release 资产没有这个头，跨域加载 GLB 会被浏览器拦掉）。
+  // 两个地址互为兜底：谁先用由 hasLocalAssets 决定，失败时换另一个再试。
   const localModelUrl = MODEL.file ? `/assets/model/${MODEL.file}` : null
-  const [modelSrc, setModelSrc] = useState<string | null>(localModelUrl ?? MODEL.remote ?? null)
+  const [modelSrc, setModelSrc] = useState<string | null>(() => {
+    const a = hasLocalAssets ? localModelUrl : (MODEL.remote ?? localModelUrl)
+    return a ?? null
+  })
   const modelUrl = modelSrc
   const use3d = Boolean(modelUrl) && !modelFailed && s.config.stage === '3d'
 
@@ -389,10 +393,11 @@ export default function App() {
             speaking={speaking}
             onTap={tapStage}
             onFail={(reason) => {
-              // 本地没有模型时，先用在线地址再试一次；两边都不行才退回立绘
-              if (MODEL.remote && modelSrc !== MODEL.remote) {
-                console.warn('[3d] 本地模型不可用，改用在线素材：', reason)
-                setModelSrc(MODEL.remote)
+              // 先用本地、失败换在线；先用在线、失败换本地——两边都试过才退回立绘
+              const other = modelSrc === localModelUrl ? (MODEL.remote ?? null) : localModelUrl
+              if (other && other !== modelSrc) {
+                console.warn('[3d] 这个地址的模型不可用，换另一个再试：', reason)
+                setModelSrc(other)
                 return
               }
               console.warn('[3d] 模型加载失败，退回立绘：', reason)

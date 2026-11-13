@@ -58,25 +58,39 @@ export const OPERATOR = {
   address: '老板',
 } as const
 
-// 立绘：先本地（tools/fetch-assets.mjs 落地），再回源 PRTS。顺序不能反——
-// 「缺席」是终态，一旦判定失败元素就隐藏，后面换地址也救不回来。
+// 素材地址的顺序按「这个页面跑在哪」决定：
+//   本机（dev / 单文件 exe）→ 本地文件优先，缺了再回源；
+//   托管站（GitHub Pages 之类）→ 远端优先，因为本地那一份压根不在仓库里，
+//   先试本地只会在控制台留一串 404（实测线上 6 条），纯噪声。
 // 两张图都是官方立绘：E0/E1 是全身站姿（默认用这张，人物大、看得清），
 // 精二那张是爆炸式插画，信赖到精英阶段 2 才换上——进度有视觉回报。
 const REMOTE = 'https://media.prts.wiki'
-export const PORTRAIT_E1 = [
+const LOCAL_HOSTS = /^(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)$/
+/** 这个页面是否跑在「素材就在旁边」的本机环境 */
+export const hasLocalAssets =
+  typeof location !== 'undefined' && LOCAL_HOSTS.test(location.hostname)
+
+/** 本地与远端两个地址，按部署环境排序 */
+function preferLocal(localPath: string, remoteUrl: string): string[] {
+  return hasLocalAssets ? [localPath, remoteUrl] : [remoteUrl, localPath]
+}
+
+export const PORTRAIT_E1 = preferLocal(
   '/assets/立绘_1.png',
-  `${REMOTE}/5/56/${encodeURIComponent('立绘_新约能天使_1.png')}`,
-]
+  `${REMOTE}/5/56/${encodeURIComponent('立绘_新约能天使_1.png')}`
+)
 export const PORTRAIT_E2 = [
-  '/assets/立绘_2.png',
-  `${REMOTE}/0/07/${encodeURIComponent('立绘_新约能天使_2.png')}`,
+  ...preferLocal(
+    '/assets/立绘_2.png',
+    `${REMOTE}/0/07/${encodeURIComponent('立绘_新约能天使_2.png')}`
+  ),
   ...PORTRAIT_E1,
 ]
 
 export function voiceCandidates(file: string, lang: VoiceLang): string[] {
   // voice_cn/ 是中文配音，voice/ 才是日配；文件名两边一样，只有目录不同
   const remote = lang === 'jp' ? VOICE.voiceBase.jp : VOICE.voiceBase.cn
-  return [`/assets/voice/${lang}/${file}`, `${remote}${file}`]
+  return preferLocal(`/assets/voice/${lang}/${file}`, `${remote}${file}`)
 }
 
 /** 台词分组：给「台词库」面板与闲置主动说话用 */
